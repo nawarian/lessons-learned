@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Where Did This Come From?</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Reference · Provenance & Removal</p>
+<h1>Where did this come from?</h1>
+<p class="subtitle">One command's path tells you who installed it — and how to remove it cleanly.</p>
+
+<h2>The four sources at a glance</h2>
+<table>
+<thead><tr><th>Source</th><th>Typical location</th><th>Owned by dpkg?</th><th>Clean removal</th></tr></thead>
+<tbody>
+<tr><td><strong>apt / dpkg</strong></td><td><code>/usr/bin</code>, <code>/usr/lib</code>, <code>/usr/sbin</code></td><td>Yes</td><td><code>apt purge NAME</code> then <code>apt autoremove</code></td></tr>
+<tr><td><strong>snap</strong></td><td><code>/snap/bin/X</code> → <code>/snap/…</code> (squashfs)</td><td>No</td><td><code>snap remove NAME</code></td></tr>
+<tr><td><strong>make install</strong></td><td><code>/usr/local/{bin,lib,…}</code>, sometimes <code>/opt</code></td><td>No (real files)</td><td><code>make uninstall</code> · install manifest · stow</td></tr>
+<tr><td><strong>manual symlink</strong></td><td><code>/usr/local/bin/X</code> → elsewhere</td><td>No (a symlink)</td><td>Delete link; remove target dir / <code>stow -D</code></td></tr>
+</tbody>
+</table>
+
+<h2>The decision procedure</h2>
+<pre><code>1.  command -v X            # is it even on PATH? get the path
+2.  readlink -f "$(command -v X)"   # resolve every symlink to the real file
+3.  ls -l "$(command -v X)"         # is the PATH entry itself a symlink? where to?
+
+    ── classify by the resolved path ──
+    /snap/...           → SNAP            → snap remove X
+    else:
+4.  dpkg -S "$(readlink -f "$(command -v X)")"
+    prints a package   → APT/DPKG        → apt purge / apt remove
+    "no path found"    → UNMANAGED, and:
+       PATH entry is a symlink     → MANUAL SYMLINK  → rm the link (+ target)
+       PATH entry is a real file
+         under /usr/local or /opt  → MAKE INSTALL    → uninstall manifest / stow
+</code></pre>
+
+<h2>FHS landmarks that matter here</h2>
+<table>
+<thead><tr><th>Path</th><th>Who writes it</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>/usr/bin</code> <code>/usr/lib</code></td><td>the distro (apt)</td><td>Distribution-managed. Don't hand-edit. dpkg owns these.</td></tr>
+<tr><td><code>/usr/local</code></td><td><strong>you</strong></td><td>Local installs the package manager will never touch. Mirrors <code>/usr</code> (<code>bin lib sbin share</code>).</td></tr>
+<tr><td><code>/opt</code></td><td>3rd-party / you</td><td>Self-contained blobs, one dir per app (<code>/opt/foo/…</code>).</td></tr>
+<tr><td><code>/snap</code></td><td>snapd</td><td>Read-only squashfs mounts, one per snap revision.</td></tr>
+<tr><td><code>/etc</code></td><td>distro + you</td><td>Config. <code>apt remove</code> leaves it; <code>apt purge</code> deletes it.</td></tr>
+<tr><td><code>/var</code></td><td>programs</td><td>Mutable state: logs, spool, <code>/var/lib/snapd</code> (snap data & blobs).</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<strong>The one-line rule.</strong> If <code>dpkg -S</code> claims the file, apt owns it.
+If the path starts with <code>/snap</code>, snapd owns it. If it sits in
+<code>/usr/local</code> or <code>/opt</code> and dpkg disclaims it, <em>you</em> own it —
+and the difference between a symlink and a real file there tells you whether it
+came from a manual link or a <code>make install</code>.
+</div>
+
+<h2>Inspecting an apt package's full footprint</h2>
+<pre><code>dpkg -L NAME      # every file the package installed (so nothing is missed)
+dpkg -l 'pat*'    # list installed packages matching a glob
+apt-cache rdepends NAME   # what depends on it (before you yank it)
+</code></pre>
+
+<p class="note">Source: <a href="https://refspecs.linuxfoundation.org/FHS_3.0/fhs-3.0.pdf">FHS 3.0</a> ·
+<a href="https://man7.org/linux/man-pages/man1/dpkg-query.1.html">dpkg-query(1)</a>.
+Keep this sheet open while you work through the lessons.</p>
+
+<script>
+function cycleTheme(){const h=document.documentElement;const c=h.getAttribute('data-theme');h.setAttribute('data-theme',c==='dark'?'light':c==='light'?'':'dark');}
+</script>
+</body>
+</html>

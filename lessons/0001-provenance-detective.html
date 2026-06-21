@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The Provenance Detective</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 1 · Decluttering Linux</p>
+<h1>The Provenance Detective</h1>
+<p class="subtitle">Before you can remove anything cleanly, you have to know who installed it. Here's how to find out — every time, in under a minute.</p>
+
+<div class="card">
+<strong>The win:</strong> by the end, you can take <em>any</em> command on your
+<code>PATH</code> and prove which of four sources put it there — <strong>apt</strong>,
+<strong>snap</strong>, a <strong>make install</strong>, or a <strong>manual symlink</strong>.
+That single fact decides the correct way to uninstall it. Get this wrong and you
+delete a binary while leaving its libraries, configs, and data behind — exactly
+the cruft you're trying to clear.
+</div>
+
+<h2>Why provenance is the whole game</h2>
+<p>
+Every "uninstall" question reduces to one prior question: <em>who manages this
+file?</em> Each source keeps its own ledger, and only its own tool can settle the
+account cleanly:
+</p>
+<ul>
+<li><strong>apt</strong> records every file it placed in a database (<code>dpkg</code>). Ask the database.</li>
+<li><strong>snap</strong> mounts each app as a read-only image under <code>/snap</code>. There's nothing to "delete" — you unmount it via <code>snap remove</code>.</li>
+<li><strong>make install</strong> copies raw files into <code>/usr/local</code> and tells <em>nobody</em>. No ledger exists; you must reconstruct one.</li>
+<li><strong>manual symlink</strong> is just a pointer you (or a tool like Stow) created. Removing it is removing the link.</li>
+</ul>
+
+<h2>The map: a few FHS landmarks</h2>
+<p>
+The <a href="https://refspecs.linuxfoundation.org/FHS_3.0/fhs-3.0.pdf">Filesystem
+Hierarchy Standard</a> isn't trivia here — it's the map that makes provenance
+<em>readable from the path alone</em>. The crucial boundary:
+</p>
+<table>
+<thead><tr><th>Path</th><th>Owner</th><th>What it tells you</th></tr></thead>
+<tbody>
+<tr><td><code>/usr/bin</code>, <code>/usr/lib</code></td><td>the distro</td><td>Almost certainly <strong>apt</strong>. dpkg should claim it.</td></tr>
+<tr><td><code>/usr/local/…</code></td><td><strong>you</strong></td><td>The package manager will <em>never</em> put anything here. So if it's here, it's a manual install or symlink.</td></tr>
+<tr><td><code>/snap/…</code></td><td>snapd</td><td>A <strong>snap</strong>. Read-only squashfs mount.</td></tr>
+<tr><td><code>/opt/…</code></td><td>3rd-party</td><td>Self-contained vendor blob; treat like a manual install.</td></tr>
+</tbody>
+</table>
+<div class="callout">
+The <code>/usr</code> vs <code>/usr/local</code> split is the single most useful
+fact in this whole topic. <code>/usr</code> belongs to the distribution;
+<code>/usr/local</code> belongs to you. The same binary name can exist in both —
+and which one wins on your <code>PATH</code> is a classic source of "why am I
+running the old version?" confusion.
+</div>
+
+<h2>The procedure (memorise this shape)</h2>
+<pre><code>command -v git                      # 1. where is it?  →  /usr/bin/git
+readlink -f "$(command -v git)"     # 2. resolve symlinks to the REAL file
+ls -l "$(command -v git)"           # 3. was the PATH entry itself a link?
+dpkg -S "$(readlink -f "$(command -v git)")"   # 4. does apt claim it?</code></pre>
+<p>Read the results top-down and the source falls out:</p>
+<ol>
+<li>Resolved path under <code>/snap</code>? → <span class="step">snap</span>. Done.</li>
+<li>Else <code>dpkg -S</code> names a package? → <span class="step">apt</span>. Done.</li>
+<li>Else it's unowned. Was the <code>PATH</code> entry a <strong>symlink</strong> (step 3)? → <span class="step">manual symlink</span>.</li>
+<li>Else it's a <strong>real file</strong> in <code>/usr/local</code> or <code>/opt</code>? → <span class="step">make install</span>.</li>
+</ol>
+<p class="note">Keep the <a href="../reference/provenance-cheatsheet.html">Provenance &amp; Removal cheat sheet</a> open beside you — it has this as a one-screen flowchart.</p>
+
+<h2>Now you classify</h2>
+<p>Each transcript below is real terminal output. Read it, then pick the source. Answers give immediate feedback.</p>
+
+<div class="quiz" id="q1">
+<div class="q">A. <pre><code>$ command -v htop
+/usr/bin/htop
+$ dpkg -S /usr/bin/htop
+htop: /usr/bin/htop</code></pre></div>
+<button class="opt" data-correct="1">apt package</button>
+<button class="opt">snap package</button>
+<button class="opt">make install</button>
+<button class="opt">manual symlink</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">B. <pre><code>$ command -v code
+/snap/bin/code
+$ readlink -f /snap/bin/code
+/snap/bin/code</code></pre></div>
+<button class="opt">apt package</button>
+<button class="opt" data-correct="1">snap package</button>
+<button class="opt">make install</button>
+<button class="opt">manual symlink</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">C. <pre><code>$ command -v rg
+/usr/local/bin/rg
+$ ls -l /usr/local/bin/rg
+-rwxr-xr-x 1 root root 5077328 /usr/local/bin/rg
+$ dpkg -S /usr/local/bin/rg
+dpkg-query: no path found matching /usr/local/bin/rg</code></pre></div>
+<button class="opt">apt package</button>
+<button class="opt">snap package</button>
+<button class="opt" data-correct="1">make install</button>
+<button class="opt">manual symlink</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+<div class="q">D. <pre><code>$ command -v node
+/usr/local/bin/node
+$ ls -l /usr/local/bin/node
+lrwxrwxrwx 1 root root 41 node -> /usr/local/n/versions/node/22.3.0/bin/node
+$ dpkg -S /usr/local/bin/node
+dpkg-query: no path found matching /usr/local/bin/node</code></pre></div>
+<button class="opt">apt package</button>
+<button class="opt">snap package</button>
+<button class="opt">make install</button>
+<button class="opt" data-correct="1">manual symlink</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q5">
+<div class="q">E. The trap. <pre><code>$ command -v python3
+/usr/bin/python3
+$ ls -l /usr/bin/python3
+lrwxrwxrwx 1 root root 10 python3 -> python3.11
+$ dpkg -S "$(readlink -f /usr/bin/python3)"
+libpython3.11-minimal: /usr/bin/python3.11</code></pre></div>
+<button class="opt" data-correct="1">apt package</button>
+<button class="opt">snap package</button>
+<button class="opt">make install</button>
+<button class="opt">manual symlink</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>The subtlety in E</h2>
+<p>
+<code>/usr/bin/python3</code> <em>is</em> a symlink — but that does <strong>not</strong>
+make it a "manual symlink." The distinction is who created the link:
+<code>dpkg</code> itself ships symlinks inside packages. That's exactly why step 4
+resolves the link with <code>readlink -f</code> <em>before</em> asking
+<code>dpkg -S</code>. A symlink only means "manual" when it lives in
+<code>/usr/local</code> <em>and</em> dpkg disclaims the resolved target. Order of
+operations is everything: <strong>resolve, then ask the database, then judge the link.</strong>
+</p>
+
+<div class="ask">
+<strong>I'm your teacher — ask me anything.</strong> Confused about why
+<code>readlink -f</code> matters, or hit a real command on your machine that
+doesn't fit the four boxes? Bring it to me and we'll classify it together. Edge
+cases (pip, npm -g, AppImage, Flatpak, <code>update-alternatives</code>) are great
+questions — some are deliberately out of scope for now, but I'll tell you where
+they'd land.
+</div>
+
+<h2>Do this on your own machine</h2>
+<p>Pick three commands you actually use and run the procedure on each:</p>
+<pre><code>for c in git curl your-favourite-tool; do
+  echo "== $c =="
+  p="$(command -v "$c")"; ls -l "$p"; dpkg -S "$(readlink -f "$p")" 2>&1 | head -1
+done</code></pre>
+<p>
+Try to find at least one tool that <code>dpkg</code> disclaims — something living
+in <code>/usr/local</code>. That's a future cleanup target, and the subject of an
+upcoming lesson on uninstalling a <code>make install</code> that has no
+<code>make uninstall</code>.
+</p>
+
+<div class="callout">
+<strong>Primary source to read next:</strong> skim the directory descriptions in
+the <a href="https://refspecs.linuxfoundation.org/FHS_3.0/fhs-3.0.pdf">FHS 3.0
+specification</a> (just §3, the top-level directories — 15 minutes). It's the
+authoritative map under everything we'll do.
+</div>
+
+<div class="lesson-nav">
+<span>Lesson 1 of a series</span>
+<a href="../reference/provenance-cheatsheet.html">→ Cheat sheet: Provenance &amp; Removal</a>
+<span class="note">Next up: apt removal done right — remove vs purge vs autoremove.</span>
+</div>
+
+<script>
+function cycleTheme(){const h=document.documentElement;const c=h.getAttribute('data-theme');h.setAttribute('data-theme',c==='dark'?'light':c==='light'?'':'dark');}
+
+let answered = 0, correct = 0;
+const total = document.querySelectorAll('.quiz').length;
+document.querySelectorAll('.quiz').forEach(quiz => {
+  const opts = quiz.querySelectorAll('.opt');
+  const fb = quiz.querySelector('.fb');
+  opts.forEach(opt => opt.addEventListener('click', () => {
+    if (quiz.dataset.done) return;
+    quiz.dataset.done = '1';
+    answered++;
+    const right = opt.dataset.correct === '1';
+    if (right) correct++;
+    opts.forEach(o => {
+      o.disabled = true;
+      if (o.dataset.correct === '1') o.classList.add('correct');
+    });
+    if (!right) opt.classList.add('wrong');
+    fb.classList.add('show');
+    fb.innerHTML = right
+      ? '<strong style="color:var(--good)">Correct.</strong> '
+      : '<strong style="color:var(--bad)">Not quite.</strong> ';
+    fb.innerHTML += FEEDBACK[quiz.id];
+    if (answered === total) {
+      const sc = document.getElementById('scorecard');
+      sc.style.display = 'block';
+      document.getElementById('score').textContent = correct + ' / ' + total;
+      document.getElementById('scorenote').textContent = correct === total
+        ? 'Clean sweep. You can classify provenance on sight — that’s the keystone skill.'
+        : 'Re-read the procedure for any you missed, then re-run the drill on your own machine.';
+      sc.scrollIntoView({behavior:'smooth', block:'nearest'});
+    }
+  }));
+});
+const FEEDBACK = {
+  q1: 'dpkg names a package (<code>htop</code>) that owns the file — the ledger claims it, so it’s apt. Remove with <code>apt purge htop</code>.',
+  q2: 'The path lives under <code>/snap</code>. Nothing to ask dpkg — it’s a snap. Remove with <code>snap remove code</code>.',
+  q3: 'A <em>real</em> executable (note the <code>-rwxr-xr-x</code>, not <code>l</code>) in <code>/usr/local/bin</code> that dpkg disclaims: a classic <code>make install</code> (or a copied release binary). No manifest exists yet — that’s the cleanup challenge.',
+  q4: 'Same <code>/usr/local</code>, but <code>ls -l</code> shows <code>l</code>… it’s a symlink into a version manager’s tree. Manual symlink: remove the link (and let the manager handle its tree).',
+  q5: 'Yes — apt. The link <code>python3 → python3.11</code> was shipped <em>by dpkg itself</em>. Because we resolved it first, <code>dpkg -S</code> claims the real file. A symlink alone never means “manual.”'
+};
+</script>
+</body>
+</html>
