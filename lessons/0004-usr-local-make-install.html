@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 4 · The /usr/local Problem</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 4 · Decluttering Linux</p>
+<h1>The <code>/usr/local</code> Problem</h1>
+<p class="subtitle">A <code>make install</code> copies files everywhere and tells nobody. No ledger exists. Here's how to uninstall one anyway — and never create the problem again.</p>
+
+<div class="card">
+<strong>The win:</strong> you'll be able to remove a source-built program that has
+no <code>make uninstall</code>, three ways depending on what you have left — and
+you'll know the one habit (Stow) that makes every future source install a
+one-command uninstall.
+</div>
+
+<h2>Why this is the hard case</h2>
+<p>
+apt and snap both keep ledgers. <code>make install</code> keeps <em>none</em> — it's
+just a recipe that runs <code>cp</code> and <code>install</code> into
+<code>/usr/local</code> (and sometimes <code>/etc</code>, <code>/var</code>…).
+<a href="https://www.w3tutorials.net/blog/what-s-the-opposite-of-make-install-i-e-how-do-you-uninstall-a-library-in-linux/">[w3tutorials]</a>
+That's exactly why <a href="0001-provenance-detective.html">Lesson 1</a> classified
+these by <em>elimination</em>: a real file in <code>/usr/local</code> that
+<code>dpkg</code> disclaims. Recall the <code>/usr</code> vs <code>/usr/local</code>
+boundary — the package manager never writes the latter, so everything there is
+yours to account for.
+</p>
+
+<h2>Three routes, best-to-worst by what you kept</h2>
+
+<h3><span class="step">1.</span> The build directory still exists</h3>
+<p>Try the uninstall target — many projects have one, some don't advertise it:</p>
+<pre><code>make -n uninstall      # dry run: preview what it WOULD remove
+sudo make uninstall    # if the target exists</code></pre>
+<p>
+<code>make -n</code> first is the safety move — if the target is missing you'll
+see "No rule to make target 'uninstall'" instead of guessing.
+<a href="https://www.w3tutorials.net/blog/what-s-the-opposite-of-make-install-i-e-how-do-you-uninstall-a-library-in-linux/">[w3tutorials]</a>
+</p>
+
+<h3><span class="step">2.</span> No uninstall target, but you can re-run install</h3>
+<p>Capture the manifest the install <em>would</em> write, then delete exactly those paths:</p>
+<pre><code># Re-run install but record every destination file:
+sudo make install DESTDIR=/tmp/manifest   # stages files under /tmp/manifest
+find /tmp/manifest -type f -o -type l |
+  sed 's#/tmp/manifest##' > files.txt      # the real install paths
+# inspect files.txt, then:
+xargs -a files.txt sudo rm -v</code></pre>
+<p>
+Many GNU autotools builds also drop an <code>install_manifest.txt</code> (CMake
+always does) — if you see one, <code>xargs -a install_manifest.txt sudo rm</code>
+is the whole job.
+</p>
+
+<h3><span class="step">3.</span> Nothing left — only the installed files on disk</h3>
+<p>
+Reconstruct the footprint by hand. You classified the binary in Lesson 1; now map
+its neighbours. For a program <code>foo</code> installed under <code>--prefix=/usr/local</code>,
+the usual suspects are <code>/usr/local/bin/foo</code>,
+<code>/usr/local/lib/libfoo*</code>, <code>/usr/local/include/foo*</code>,
+<code>/usr/local/share/foo/</code>, and <code>/usr/local/share/man/man1/foo*</code>.
+List, verify each is unowned, then remove:
+</p>
+<pre><code>for p in /usr/local/bin/foo /usr/local/lib/libfoo* \
+         /usr/local/include/foo* /usr/local/share/foo; do
+  dpkg -S "$p" 2>/dev/null || echo "UNOWNED: $p"   # confirm before deleting
+done</code></pre>
+<p class="note">This is the messy route — Lesson 5 covers tooling (<code>cruft</code>) to find unowned files systematically.</p>
+
+<div class="callout">
+<strong>Never again:</strong> install future source builds through
+<a href="https://www.gnu.org/software/stow/manual/stow.html">GNU Stow</a>. Build
+with <code>./configure --prefix=/usr/local/stow/foo-1.2</code>, run
+<code>make install</code> into that isolated tree, then <code>cd /usr/local/stow &amp;&amp;
+sudo stow foo-1.2</code> to symlink it into <code>/usr/local</code>. To uninstall:
+<code>sudo stow -D foo-1.2</code> removes every symlink, and deleting the one
+directory removes the files. One app = one directory = trivial removal.
+<a href="https://community.hetzner.com/tutorials/using-gnu-stow-to-manage-manually-compiled-software/">[Hetzner]</a>
+</div>
+<p>
+Prefer apt's tooling? <a href="https://wiki.debian.org/CheckInstall">CheckInstall</a>
+wraps <code>make install</code>, records every file it touches, and builds a real
+<code>.deb</code> — so the source build becomes removable with
+<code>apt purge</code> like anything else.
+</p>
+
+<h2>Drills</h2>
+
+<div class="quiz" id="q1">
+<div class="q">A. You kept the build dir. Safest <em>first</em> command to check for a clean uninstall?</div>
+<button class="opt">sudo make clean</button>
+<button class="opt" data-correct="1">make -n uninstall</button>
+<button class="opt">sudo rm bin</button>
+<button class="opt">make reinstall now</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">B. Why is uninstalling a <code>make install</code> harder than an apt package?</div>
+<button class="opt">it uses sudo</button>
+<button class="opt">files are encrypted</button>
+<button class="opt" data-correct="1">no ledger exists</button>
+<button class="opt">paths are random</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">C. Which tool turns a source build into a one-command future uninstall via symlinks?</div>
+<button class="opt">apt purge tool</button>
+<button class="opt" data-correct="1">GNU Stow farm</button>
+<button class="opt">dpkg reverse mode</button>
+<button class="opt">snap revision prune</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+<div class="q">D. Before <code>rm</code>-ing a file in <code>/usr/local</code>, what confirms it's truly unowned?</div>
+<button class="opt">ls -l path</button>
+<button class="opt">file path here</button>
+<button class="opt" data-correct="1">dpkg -S path</button>
+<button class="opt">stat path now</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<div class="ask">
+<strong>Ask me anything.</strong> Hit a real source-built tool in your
+<code>/usr/local</code> and not sure which route applies? Tell me the program and
+whether you still have its build directory, and we'll plan the exact removal —
+this is the lesson most worth doing with a real example from your machine.
+</div>
+
+<h2>Do this on your own machine</h2>
+<p>List the binaries you've put in <code>/usr/local</code> and confirm none are apt's:</p>
+<pre><code>ls /usr/local/bin
+for f in /usr/local/bin/*; do dpkg -S "$f" 2>/dev/null || echo "UNOWNED: $f"; done</code></pre>
+<p>
+Every <code>UNOWNED</code> line is a manual/source install. Pick one, figure out
+which of the three routes fits, and bring it here before you delete anything.
+</p>
+
+<div class="callout">
+<strong>Primary source:</strong> the <a href="https://www.gnu.org/software/stow/manual/stow.html">GNU
+Stow manual</a> (the "Introduction" + "Terminology" sections) — the cleanest
+mental model for managing <code>/usr/local</code> by hand.
+</div>
+
+<div class="lesson-nav">
+<a href="0003-snap-cleanup.html">← Lesson 3: snap</a>
+<a href="../reference/provenance-cheatsheet.html">Cheat sheet</a>
+<a href="0005-auditing-unowned-files.html">Lesson 5: auditing unowned files →</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+const FEEDBACK = {
+  q1: '<code>make -n uninstall</code> dry-runs it: you see what would be removed, or learn the target doesn’t exist — no damage either way.',
+  q2: 'apt/dpkg records every installed file; <code>make install</code> records nothing. You must reconstruct the file list yourself.',
+  q3: 'GNU Stow installs into an isolated per-app tree and symlinks it into place — <code>stow -D</code> removes every link at once.',
+  q4: '<code>dpkg -S</code> asks the database who owns the path. “No path found” = unowned = safe to remove as a manual install.'
+};
+initQuiz(FEEDBACK);
+</script>
+</body>
+</html>

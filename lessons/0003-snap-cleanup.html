@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 3 · snap — Where the Bytes Hide</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 3 · Decluttering Linux</p>
+<h1>snap — Where the Bytes Hide</h1>
+<p class="subtitle">snaps don't live where apt packages live, and old revisions silently pile up gigabytes. Here's the whole mental model, and how to reclaim the space.</p>
+
+<div class="card">
+<strong>The win:</strong> you'll understand why <code>du</code> on <code>/snap</code>
+"lies", where snap data actually sits, how to remove a snap cleanly, and how to
+delete the stale <em>revisions</em> that quietly eat 2–4 GB.
+</div>
+
+<h2>A different model from apt</h2>
+<p>
+An apt package scatters files across <code>/usr/bin</code>, <code>/usr/lib</code>,
+<code>/etc</code>… A snap does the opposite: each app is a single
+<strong>read-only squashfs image</strong>, mounted at a versioned path. That's why
+<a href="0001-provenance-detective.html">Lesson 1</a> could classify a snap from
+the path alone — it starts with <code>/snap</code>.
+</p>
+<table>
+<thead><tr><th>Path</th><th>What's there</th></tr></thead>
+<tbody>
+<tr><td><code>/snap/bin/X</code></td><td>The command on your <code>PATH</code> — a shim into the mounted image.</td></tr>
+<tr><td><code>/snap/&lt;name&gt;/&lt;rev&gt;/</code></td><td>The mounted, read-only squashfs for one <em>revision</em>.</td></tr>
+<tr><td><code>/var/lib/snapd/snaps/</code></td><td>The actual <code>.snap</code> image <strong>files</strong> on disk — including old revisions. <a href="https://itsfoss.com/clean-snap-packages/">[It's FOSS]</a></td></tr>
+<tr><td><code>~/snap/&lt;name&gt;/</code> &amp; <code>/var/snap/</code></td><td>Per-user and system <em>data</em> the app writes.</td></tr>
+</tbody>
+</table>
+<div class="callout">
+<strong>Why <code>du -sh /snap</code> looks huge but freeing it does nothing:</strong>
+<code>/snap/&lt;name&gt;/&lt;rev&gt;</code> is a <em>mount</em> of a squashfs image — <code>du</code>
+counts the mounted contents, but the bytes physically live once in
+<code>/var/lib/snapd/snaps/</code>. To see real disk pressure, look there, or at
+<code>df -h | grep snap</code> for the mounts.
+</div>
+
+<h2>The revision pile-up</h2>
+<p>
+snapd keeps old revisions around so it can roll back. By default it retains a
+couple per snap — but over months that's gigabytes of disabled images.
+<a href="https://itsfoss.com/clean-snap-packages/">[It's FOSS]</a>
+</p>
+<pre><code>snap list                 # installed snaps (current revision)
+snap list --all           # ALSO shows old/disabled revisions
+df -h | grep snap         # the squashfs mounts, with sizes
+sudo du -sh /var/lib/snapd # true on-disk weight of snapd</code></pre>
+<p>In <code>snap list --all</code>, lines marked <code>disabled</code> are the reclaimable old revisions.</p>
+
+<h2>Removing cleanly</h2>
+<pre><code>sudo snap remove NAME                       # remove a snap (keeps a snapshot)
+sudo snap remove NAME --purge               # remove WITHOUT keeping a data snapshot
+sudo snap remove NAME --revision=&lt;rev&gt;       # drop one specific old revision</code></pre>
+<ul>
+<li><strong>Plain <code>snap remove</code></strong> unmounts the image, removes it, and — by default — keeps a <em>snapshot</em> of the app's data (so you could reinstall and restore). That snapshot is itself disk you may not want.</li>
+<li><strong><code>--purge</code></strong> skips the snapshot entirely. Use it when you're sure you won't reinstall. <a href="https://itsfoss.com/clean-snap-packages/">[It's FOSS]</a></li>
+<li><strong><code>--revision</code></strong> targets one disabled revision without touching the current one.</li>
+</ul>
+<p>To set a global cap so old revisions auto-prune: <code>sudo snap set system refresh.retain=2</code> (minimum 2).</p>
+
+<h2>Drills</h2>
+
+<div class="quiz" id="q1">
+<div class="q">A. <code>snap list --all</code> shows two lines for <code>firefox</code>; one says <code>disabled</code>. What is the disabled one?</div>
+<button class="opt" data-correct="1">an old revision</button>
+<button class="opt">a broken install</button>
+<button class="opt">a config backup</button>
+<button class="opt">another user's copy</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">B. Where do the actual <code>.snap</code> image files (the real disk weight) live?</div>
+<button class="opt">in /snap/bin</button>
+<button class="opt">in /usr/lib/snap</button>
+<button class="opt" data-correct="1">in /var/lib/snapd</button>
+<button class="opt">in /opt/snapd</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">C. You want a snap <em>and</em> its leftover data snapshot gone — no rollback kept. Which?</div>
+<button class="opt">snap remove name</button>
+<button class="opt" data-correct="1">snap remove --purge</button>
+<button class="opt">snap forget name</button>
+<button class="opt">snap disable name</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+<div class="q">D. <code>du -sh /snap</code> reports 12 GB. Why is deleting under <code>/snap</code> the wrong move?</div>
+<button class="opt">it needs sudo</button>
+<button class="opt">snaps auto-reinstall</button>
+<button class="opt" data-correct="1">those are mounts</button>
+<button class="opt">it is encrypted</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<div class="ask">
+<strong>Ask me anything.</strong> Curious whether to keep snapd at all, how
+snapshots are stored (<code>snap saved</code>), or whether a particular snap is
+safe to drop? Paste me <code>snap list --all</code> and I'll point at the
+reclaimable lines.
+</div>
+
+<h2>Do this on your own machine</h2>
+<pre><code>snap list --all | grep disabled     # the old revisions you can reclaim
+df -h | grep snap | head            # see the mounts and their sizes</code></pre>
+<p>
+Each <code>disabled</code> line is safe to drop with
+<code>sudo snap remove &lt;name&gt; --revision=&lt;rev&gt;</code>. Then set
+<code>sudo snap set system refresh.retain=2</code> so they don't pile up again.
+</p>
+
+<div class="callout">
+<strong>Primary source:</strong> <a href="https://itsfoss.com/clean-snap-packages/">Clean
+up snap packages (It's FOSS)</a> — covers <code>--all</code>, revisions, and the
+retain setting concisely.
+</div>
+
+<div class="lesson-nav">
+<a href="0002-apt-removal-done-right.html">← Lesson 2: apt removal</a>
+<a href="../reference/provenance-cheatsheet.html">Cheat sheet</a>
+<a href="0004-usr-local-make-install.html">Lesson 4: the /usr/local problem →</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+const FEEDBACK = {
+  q1: 'It’s a retained old <em>revision</em> kept for rollback. Drop it with <code>snap remove firefox --revision=&lt;rev&gt;</code>.',
+  q2: 'The <code>.snap</code> squashfs files physically live in <code>/var/lib/snapd/snaps/</code>. <code>/snap/...</code> is just where they’re mounted.',
+  q3: '<code>--purge</code> removes the snap without keeping a data snapshot — no rollback, no leftover snapshot disk.',
+  q4: 'Each <code>/snap/&lt;name&gt;/&lt;rev&gt;</code> is a mounted squashfs; <code>du</code> double-counts mounted contents. Reclaim via <code>snap remove</code>, never <code>rm</code>.'
+};
+initQuiz(FEEDBACK);
+</script>
+</body>
+</html>

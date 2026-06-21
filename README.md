@@ -24,22 +24,35 @@ later.
 
 ## Lessons
 
-| # | Lesson | One-line | 
+| # | Lesson | One-line |
 | --- | --- | --- |
 | 1 | [The Provenance Detective](./lessons/0001-provenance-detective.html) | Classify any command into apt / snap / make-install / manual-symlink — the keystone skill behind every clean uninstall. |
+| 2 | [apt Removal, Done Right](./lessons/0002-apt-removal-done-right.html) | `remove` vs `purge` vs `autoremove`; reading a package's full footprint with `dpkg -L`. |
+| 3 | [snap — Where the Bytes Hide](./lessons/0003-snap-cleanup.html) | The squashfs model, where disk space really goes, and pruning old revisions. |
+| 4 | [The `/usr/local` Problem](./lessons/0004-usr-local-make-install.html) | Uninstalling a `make install` with no `make uninstall` — manifests, Stow, CheckInstall. |
+| 5 | [Auditing Unowned Files](./lessons/0005-auditing-unowned-files.html) | Sweep the whole system for unmanaged files (`cruft`) and modified distro files (`debsums`). |
 
 **Reference:** [Where Did This Come From? — Provenance & Removal cheat sheet](./reference/provenance-cheatsheet.html)
 
-## Viewing a lesson
+## Viewing the lessons
 
-Lessons are standalone HTML — no build step, no server. Open one in a browser:
+Lessons are standalone HTML — no build step, no server. The easiest way is the
+`Makefile`, which generates a clickable index of every lesson and opens it:
+
+```bash
+make            # build index.html and open it in your browser (default)
+make lessons    # open every lesson in its own tab, in order
+make help       # list all targets
+```
+
+Or open a single file directly:
 
 ```bash
 xdg-open lessons/0001-provenance-detective.html   # Linux
 ```
 
-Each lesson links the shared stylesheet in [`assets/`](./assets/), supports a
-light/dark toggle, and is designed to print cleanly for review.
+Each lesson links the shared stylesheet and quiz engine in [`assets/`](./assets/),
+supports a light/dark toggle, and is designed to print cleanly for review.
 
 ## How to use it
 

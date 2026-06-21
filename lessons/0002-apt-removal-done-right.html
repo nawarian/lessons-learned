@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 · apt Removal, Done Right</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 2 · Decluttering Linux</p>
+<h1>apt Removal, Done Right</h1>
+<p class="subtitle">You classified it as apt in <a href="0001-provenance-detective.html">Lesson 1</a>. Now remove it so nothing — binary, config, or orphaned dependency — is left behind.</p>
+
+<div class="card">
+<strong>The win:</strong> you'll know exactly which of <code>remove</code>,
+<code>purge</code>, and <code>autoremove</code> to reach for, why "remove" alone
+is what <em>leaves</em> cruft, and how to see a package's full footprint
+<em>before</em> you pull it.
+</div>
+
+<h2>Three verbs, three different jobs</h2>
+<p>
+The single biggest misconception: that <code>apt remove</code> "uninstalls" a
+package. It removes the <em>program files</em> — and deliberately leaves two
+things behind.
+</p>
+<table>
+<thead><tr><th>Command</th><th>Removes binaries/libs?</th><th>Removes its config in <code>/etc</code>?</th><th>Removes pulled-in deps?</th></tr></thead>
+<tbody>
+<tr><td><code>apt remove PKG</code></td><td>Yes</td><td><strong>No</strong></td><td>No</td></tr>
+<tr><td><code>apt purge PKG</code></td><td>Yes</td><td><strong>Yes</strong></td><td>No</td></tr>
+<tr><td><code>apt autoremove</code></td><td>—</td><td>—</td><td><strong>Yes</strong> (orphans only)</td></tr>
+</tbody>
+</table>
+<p>
+So the two sources of "I uninstalled it but stuff is still here":
+</p>
+<ul>
+<li><strong>Config residue.</strong> <code>remove</code> keeps <code>/etc</code> files (and the package shows as <code>rc</code> in <code>dpkg -l</code> — <em>r</em>emoved, <em>c</em>onfig remains). <code>purge</code> is what deletes them. <a href="https://itsfoss.com/apt-remove-purge/">[It's FOSS]</a></li>
+<li><strong>Orphaned dependencies.</strong> Install <code>apache</code> and it drags in a dozen libraries. Remove <code>apache</code> and those libraries <em>stay</em> until you run <code>apt autoremove</code>. <a href="https://itsfoss.com/apt-remove-purge/">[It's FOSS]</a></li>
+</ul>
+<div class="callout">
+<strong>The clean-removal one-liner:</strong>
+<code>sudo apt purge PKG &amp;&amp; sudo apt autoremove --purge</code>.
+Purge removes the package <em>and</em> its config; <code>autoremove --purge</code>
+then sweeps the now-orphaned dependencies <em>and their</em> configs too.
+</div>
+
+<h2>Look before you leap: the footprint</h2>
+<p>
+Before removing anything non-trivial, ask two questions of dpkg's ledger
+(<a href="https://man7.org/linux/man-pages/man1/dpkg-query.1.html">dpkg-query(1)</a>):
+</p>
+<pre><code>dpkg -L nginx              # every file this package put on disk
+apt-cache rdepends nginx   # what would break if it vanished (reverse-deps)
+dpkg -l 'nginx*'           # status of matching packages (ii / rc / un)</code></pre>
+<p>
+<code>dpkg -L</code> is your guarantee that nothing is missed — it's the
+authoritative manifest apt itself uses. The leading status codes from
+<code>dpkg -l</code> are worth memorising:
+</p>
+<table>
+<thead><tr><th>Code</th><th>Means</th></tr></thead>
+<tbody>
+<tr><td><code>ii</code></td><td>installed, fully.</td></tr>
+<tr><td><code>rc</code></td><td>removed, but <strong>config files remain</strong> — a purge target.</td></tr>
+<tr><td><code>un</code></td><td>unknown / not installed.</td></tr>
+</tbody>
+</table>
+<p>
+To sweep up every config-residue package at once:
+<code>dpkg -l | awk '/^rc/{print $2}' | xargs -r sudo apt purge -y</code>.
+</p>
+
+<h2>Drills</h2>
+
+<div class="quiz" id="q1">
+<div class="q">A. You ran <code>apt remove nginx</code> a month ago. <code>dpkg -l nginx</code> now shows <code>rc nginx …</code>. What's still on disk?</div>
+<button class="opt">the program binaries</button>
+<button class="opt" data-correct="1">just the config</button>
+<button class="opt">nothing at all</button>
+<button class="opt">only the libraries</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">B. You want a package <em>and</em> its <code>/etc</code> config gone in one shot. Which verb?</div>
+<button class="opt">apt remove pkg</button>
+<button class="opt" data-correct="1">apt purge pkg</button>
+<button class="opt">apt autoremove</button>
+<button class="opt">apt clean pkg</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">C. After removing apache, a dozen libraries it pulled in are still installed. What clears just those?</div>
+<button class="opt">sudo apt purge</button>
+<button class="opt">sudo dpkg remove</button>
+<button class="opt" data-correct="1">sudo apt autoremove</button>
+<button class="opt">sudo apt clean</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+<div class="q">D. Before yanking a package, which command shows <em>every file it installed</em> so nothing is missed?</div>
+<button class="opt">dpkg -S pkg</button>
+<button class="opt" data-correct="1">dpkg -L pkg</button>
+<button class="opt">dpkg -l pkg</button>
+<button class="opt">dpkg -V pkg</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>One caution before you sweep</h2>
+<p>
+<code>apt autoremove</code> trusts the "automatically installed" flag. Occasionally
+a package you actually want got that flag and would be swept. <strong>Always read
+the list autoremove prints before confirming.</strong> If you want to keep
+something, <code>sudo apt-mark manual PKG</code> protects it. The
+<a href="https://www.linux.org/threads/dont-just-apt-autoremove-packages.49878/">"don't
+just autoremove"</a> warning is exactly this: skim, then confirm.
+</p>
+
+<div class="ask">
+<strong>Ask me anything.</strong> Want to know the difference between
+<code>apt</code> and <code>apt-get</code> here, why <code>dpkg --purge</code>
+exists alongside <code>apt purge</code>, or whether it's safe to purge a specific
+<code>rc</code> package on your box? Bring me the output and we'll read it together.
+</div>
+
+<h2>Do this on your own machine</h2>
+<p>Find your config-residue packages — the quietest, easiest cruft to clear:</p>
+<pre><code>dpkg -l | awk '/^rc/ {print $2}'</code></pre>
+<p>
+Anything listed is a package you already removed that left config behind. Inspect
+one, then purge what you recognise:
+<code>sudo apt purge &lt;name&gt;</code>. Bring the list here if you're unsure about any entry.
+</p>
+
+<div class="callout">
+<strong>Primary source:</strong> <a href="https://itsfoss.com/apt-remove-purge/">apt
+remove vs purge vs autoremove (It's FOSS)</a> — short, correct, and matches
+everything above.
+</div>
+
+<div class="lesson-nav">
+<a href="0001-provenance-detective.html">← Lesson 1: Provenance Detective</a>
+<a href="../reference/provenance-cheatsheet.html">Cheat sheet</a>
+<a href="0003-snap-cleanup.html">Lesson 3: snap →</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+const FEEDBACK = {
+  q1: 'The <code>rc</code> status = <em>r</em>emoved, <em>c</em>onfig remains. The binaries are gone; only <code>/etc</code> config lingers. <code>apt purge</code> finishes the job.',
+  q2: 'Purge = remove + delete config. <code>remove</code> alone leaves <code>/etc</code> behind (that’s the <code>rc</code> state).',
+  q3: 'Orphaned auto-installed dependencies are exactly what <code>autoremove</code> targets — it removes <em>no</em> named package, only the now-unneeded deps.',
+  q4: '<code>dpkg -L</code> lists every file the package placed on disk — the authoritative footprint. (<code>-S</code> is the reverse: file→package.)'
+};
+initQuiz(FEEDBACK);
+</script>
+</body>
+</html>

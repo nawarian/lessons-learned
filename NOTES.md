@@ -7,14 +7,28 @@
   actually run on their own machine to find or remove cruft.
 
 ## Teaching preferences
-- (none stated yet — update as they emerge)
+- Prefers the **whole set of lessons up front** over one-at-a-time drip. Asked
+  "why would you wait?" — wants to self-pace through all material. Build ahead;
+  revise lessons after they run them on real machine output rather than gating
+  release on evidence. (Trade-off accepted: less adaptivity.)
 
-## Course arc (provisional)
+## Course arc — ALL BUILT
 1. ✅ Provenance detective — classify any command into one of 4 sources. [keystone]
-2. apt removal done right — remove vs purge vs autoremove; `dpkg -L` to inspect.
-3. snap — list/all, revisions, where bytes live, clean removal.
-4. The `/usr/local` problem — make install with no uninstall; manifests; stow.
-5. Auditing unowned files — find cruft nothing manages (needs a good source first).
+2. ✅ apt removal done right — remove vs purge vs autoremove; `dpkg -L`.
+3. ✅ snap — list --all, revisions, squashfs/var, clean removal + --purge.
+4. ✅ The `/usr/local` problem — make uninstall / manifest / stow / checkinstall.
+5. ✅ Auditing unowned files — cruft + debsums/dpkg --verify, false positives.
+
+## Possible future lessons
+- Interleaving review: mixed-source classify-and-remove drills (spacing/recall).
+- Adjacent install methods currently out of scope but likely to come up:
+  pip/npm -g, AppImage, Flatpak, update-alternatives. Lesson 1 ask-box invites these.
+
+## Tooling
+- `assets/quiz.js`: shared quiz engine — `initQuiz(FEEDBACK, {perfect, partial})`.
+  All 5 lessons use it. Don't re-inline quiz logic in new lessons.
+- `Makefile`: `make` builds+opens index.html (generated, gitignored); `make
+  lessons` opens all tabs; `make index` regenerates from lessons/ + reference/.
 6. (Maybe) interleaving review — mixed-source classify + remove drills.
 
 ## Style

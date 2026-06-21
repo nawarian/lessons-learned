@@ -21,6 +21,15 @@
 - [Clean up snap packages — It's FOSS](https://itsfoss.com/clean-snap-packages/)
   `snap list --all`, removing old revisions, where snaps live. Use for: snap
   disk usage and revision cleanup.
+- [CheckInstall — Debian Wiki](https://wiki.debian.org/CheckInstall)
+  Wraps `make install` to produce a real .deb so source builds become
+  apt-removable. Use for: making future source installs trackable.
+- [CheckingDebsums — Debian Wiki](https://wiki.debian.org/CheckingDebsums)
+  `debsums` verifies installed files against dpkg's recorded md5sums. Use for:
+  finding distro files that were modified or are missing.
+- [cruft — Debian Wiki / package](https://packages.debian.org/stable/cruft)
+  Lists files on disk that no package owns. Use for: hunting truly unmanaged
+  cruft (with care — many false positives).
 
 ## Wisdom (Communities)
 
@@ -34,5 +43,4 @@
   Ubuntu-specific. Use for: apt/snap behaviour particular to Ubuntu releases.
 
 ## Gaps
-- No single trusted source yet on auditing *unowned* files in `/usr/local`
-  (debsums / cruft / manual diffing). Find one before the audit lesson.
+- (none open — `debsums` / `cruft` sources added for the auditing lesson.)

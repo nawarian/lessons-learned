@@ -192,41 +192,8 @@ authoritative map under everything we'll do.
 <span class="note">Next up: apt removal done right — remove vs purge vs autoremove.</span>
 </div>
 
+<script src="../assets/quiz.js"></script>
 <script>
-function cycleTheme(){const h=document.documentElement;const c=h.getAttribute('data-theme');h.setAttribute('data-theme',c==='dark'?'light':c==='light'?'':'dark');}
-
-let answered = 0, correct = 0;
-const total = document.querySelectorAll('.quiz').length;
-document.querySelectorAll('.quiz').forEach(quiz => {
-  const opts = quiz.querySelectorAll('.opt');
-  const fb = quiz.querySelector('.fb');
-  opts.forEach(opt => opt.addEventListener('click', () => {
-    if (quiz.dataset.done) return;
-    quiz.dataset.done = '1';
-    answered++;
-    const right = opt.dataset.correct === '1';
-    if (right) correct++;
-    opts.forEach(o => {
-      o.disabled = true;
-      if (o.dataset.correct === '1') o.classList.add('correct');
-    });
-    if (!right) opt.classList.add('wrong');
-    fb.classList.add('show');
-    fb.innerHTML = right
-      ? '<strong style="color:var(--good)">Correct.</strong> '
-      : '<strong style="color:var(--bad)">Not quite.</strong> ';
-    fb.innerHTML += FEEDBACK[quiz.id];
-    if (answered === total) {
-      const sc = document.getElementById('scorecard');
-      sc.style.display = 'block';
-      document.getElementById('score').textContent = correct + ' / ' + total;
-      document.getElementById('scorenote').textContent = correct === total
-        ? 'Clean sweep. You can classify provenance on sight — that’s the keystone skill.'
-        : 'Re-read the procedure for any you missed, then re-run the drill on your own machine.';
-      sc.scrollIntoView({behavior:'smooth', block:'nearest'});
-    }
-  }));
-});
 const FEEDBACK = {
   q1: 'dpkg names a package (<code>htop</code>) that owns the file — the ledger claims it, so it’s apt. Remove with <code>apt purge htop</code>.',
   q2: 'The path lives under <code>/snap</code>. Nothing to ask dpkg — it’s a snap. Remove with <code>snap remove code</code>.',
@@ -234,6 +201,10 @@ const FEEDBACK = {
   q4: 'Same <code>/usr/local</code>, but <code>ls -l</code> shows <code>l</code>… it’s a symlink into a version manager’s tree. Manual symlink: remove the link (and let the manager handle its tree).',
   q5: 'Yes — apt. The link <code>python3 → python3.11</code> was shipped <em>by dpkg itself</em>. Because we resolved it first, <code>dpkg -S</code> claims the real file. A symlink alone never means “manual.”'
 };
+initQuiz(FEEDBACK, {
+  perfect: 'Clean sweep. You can classify provenance on sight — that’s the keystone skill.',
+  partial: 'Re-read the procedure for any you missed, then re-run the drill on your own machine.'
+});
 </script>
 </body>
 </html>

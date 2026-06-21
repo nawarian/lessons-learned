@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 5 · Auditing Unowned Files</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 5 · Decluttering Linux</p>
+<h1>Auditing Unowned Files</h1>
+<p class="subtitle">The capstone. Instead of investigating one command at a time, sweep the whole system for files no package manages — and for distro files that were quietly modified.</p>
+
+<div class="card">
+<strong>The win:</strong> you'll turn the per-command detective work of Lesson 1
+into a <em>systematic audit</em>: list everything dpkg doesn't own, verify nothing
+distro-managed was tampered with, and read the results without panicking at the
+false positives.
+</div>
+
+<h2>Two complementary questions</h2>
+<p>A real audit asks both, and they use different tools:</p>
+<table>
+<thead><tr><th>Question</th><th>Tool</th><th>What it answers</th></tr></thead>
+<tbody>
+<tr><td>"What's here that <em>no package</em> owns?"</td><td><code>cruft</code></td><td>Finds unmanaged files — your manual installs, leftovers, true cruft. <a href="https://packages.debian.org/stable/cruft">[Debian]</a></td></tr>
+<tr><td>"Were any <em>distro</em> files changed or lost?"</td><td><code>debsums</code> / <code>dpkg --verify</code></td><td>Compares installed files to dpkg's recorded checksums. <a href="https://wiki.debian.org/CheckingDebsums">[Debian Wiki]</a></td></tr>
+</tbody>
+</table>
+
+<h2>Finding unowned files with <code>cruft</code></h2>
+<pre><code>sudo apt install cruft
+sudo cruft 2>/dev/null              # report files no package owns</code></pre>
+<p>
+<code>cruft</code> walks the filesystem, asks dpkg about each path, and lists what
+nobody claims. <strong>Expect heavy false positives</strong> — your home dir,
+<code>/var</code> runtime state, caches, logs and device nodes all legitimately
+belong to no package. The signal you want is concentrated in
+<code>/usr/local</code>, <code>/opt</code>, and stray files in
+<code>/usr/bin</code>. Narrow it:
+</p>
+<pre><code>sudo cruft 2>/dev/null | grep -E '^\s*/usr/local|^\s*/opt'</code></pre>
+<div class="callout">
+<strong>cruft is a lead generator, not a verdict.</strong> Everything it prints is
+"unmanaged," but unmanaged ≠ deletable — much of it is data you want. Treat each
+hit as a question ("what is this, did I install it?"), and confirm provenance with
+the Lesson 1 procedure before removing anything.
+</div>
+
+<h2>A no-install alternative</h2>
+<p>If you'd rather not add <code>cruft</code>, you can hand-roll the same idea for a directory:</p>
+<pre><code># every real file under /usr/local that dpkg disclaims:
+find /usr/local -type f 2>/dev/null | while read -r f; do
+  dpkg -S "$f" &gt;/dev/null 2>&1 || echo "$f"
+done</code></pre>
+<p>Slower and noisier than <code>cruft</code>, but zero new packages and easy to scope to exactly the tree you care about.</p>
+
+<h2>The other half: verify distro files with <code>debsums</code></h2>
+<pre><code>sudo apt install debsums
+sudo debsums -c       # report files whose checksum CHANGED
+sudo debsums -ec      # only CHANGED config files (the usual interest)
+sudo dpkg --verify    # built-in equivalent, no extra package</code></pre>
+<p>
+<code>debsums</code> compares each installed file to the md5sum dpkg recorded at
+install time. <a href="https://wiki.debian.org/CheckingDebsums">[Debian Wiki]</a>
+A changed config you edited is expected; a changed <em>binary</em> you didn't
+touch is worth investigating. Note some packages ship no md5sums — those report as
+"no md5sums", not as errors.
+</p>
+
+<h2>Drills</h2>
+
+<div class="quiz" id="q1">
+<div class="q">A. Which tool lists files on disk that <em>no package</em> owns?</div>
+<button class="opt" data-correct="1">cruft scans here</button>
+<button class="opt">debsums checks sums</button>
+<button class="opt">dpkg lists pkgs</button>
+<button class="opt">apt shows deps</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">B. <code>cruft</code> floods you with <code>/home</code> and <code>/var</code> hits. What's the right read?</div>
+<button class="opt">delete them all</button>
+<button class="opt">the scan failed</button>
+<button class="opt" data-correct="1">expected false positives</button>
+<button class="opt">system is compromised</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">C. You want to know which distro files were modified since install. Which tool?</div>
+<button class="opt">cruft finds them</button>
+<button class="opt" data-correct="1">debsums checks them</button>
+<button class="opt">stow links them</button>
+<button class="opt">snap lists them</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+<div class="q">D. <code>cruft</code> flags <code>/usr/local/bin/foo</code>. What comes <em>before</em> deleting it?</div>
+<button class="opt">run debsums first</button>
+<button class="opt">reboot the machine</button>
+<button class="opt">purge with apt</button>
+<button class="opt" data-correct="1">confirm its provenance</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<div class="ask">
+<strong>Ask me anything.</strong> This is the lesson where real output gets messy.
+Paste me a chunk of your <code>cruft</code> or <code>debsums -ec</code> output and
+we'll triage it together — keep, purge, or investigate — line by line.
+</div>
+
+<h2>Do this on your own machine</h2>
+<pre><code>sudo apt install -y cruft debsums
+sudo cruft 2>/dev/null | grep -E '/usr/local|/opt'   # unmanaged software
+sudo debsums -ec                                     # distro configs you changed</code></pre>
+<p>
+You've now closed the loop: <a href="0001-provenance-detective.html">Lesson 1</a>
+classifies one thing, this lesson finds <em>all</em> the things. Run both columns,
+bring the interesting lines here, and we'll decide what actually goes.
+</p>
+
+<div class="callout">
+<strong>Primary source:</strong> <a href="https://wiki.debian.org/CheckingDebsums">CheckingDebsums
+(Debian Wiki)</a> for verification, and the <a href="https://packages.debian.org/stable/cruft"><code>cruft</code>
+package page</a> for unmanaged-file discovery.
+</div>
+
+<div class="lesson-nav">
+<a href="0004-usr-local-make-install.html">← Lesson 4: the /usr/local problem</a>
+<a href="../reference/provenance-cheatsheet.html">Cheat sheet</a>
+<span class="note">End of the current series. Ask for a review/interleaving lesson anytime.</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+const FEEDBACK = {
+  q1: '<code>cruft</code> walks the filesystem and reports paths dpkg doesn’t own — your discovery tool for unmanaged files.',
+  q2: 'Home dirs, <code>/var</code> state, caches and logs legitimately belong to no package. That noise is expected — filter to <code>/usr/local</code> and <code>/opt</code>.',
+  q3: '<code>debsums</code> (or <code>dpkg --verify</code>) compares files to recorded checksums — that’s how you spot modified distro files.',
+  q4: 'Unmanaged ≠ deletable. Confirm what it is and where it came from (Lesson 1) before removing — it might be data you want.'
+};
+initQuiz(FEEDBACK);
+</script>
+</body>
+</html>
