@@ -1,0 +1,97 @@
+<!DOCTYPE html><html lang="en" data-theme=""><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Tuya Local Control Cheat Sheet</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head><body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Reference · EWS 410</p>
+<h1>Tuya Local Control — Cheat Sheet</h1>
+<p class="subtitle">The compressed essentials for driving a Tuya/Izy bulb over the LAN. Keep this open while you work.</p>
+
+<h2>The three secrets</h2>
+<p>Local control of any Tuya device needs exactly these three values. Lose any one and you cannot talk to the device locally.</p>
+<table>
+<tr><th>Secret</th><th>What it is</th><th>Where it comes from</th><th>Can it change?</th></tr>
+<tr><td><code>Device ID</code> (gwId)</td><td>Permanent per-device identifier</td><td><code>tinytuya scan</code> or the cloud wizard</td><td>Only if you re-pair / factory reset</td></tr>
+<tr><td><code>IP address</code></td><td>The bulb's address on your LAN</td><td><code>tinytuya scan</code> (UDP discovery)</td><td><strong>Yes</strong> — DHCP can move it. Pin with a reservation.</td></tr>
+<tr><td><code>Local key</code></td><td>AES key encrypting the LAN traffic</td><td>Cloud <code>wizard</code>, or offline extraction</td><td><strong>Yes</strong> — rotates when you re-pair the device in the app</td></tr>
+</table>
+
+<h2>Glossary</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td><code>DP</code> / datapoint</td><td>A numbered control channel on the device. For a bulb: power, mode, brightness, colour, colour-temp each have a DP index (e.g. <code>"20"</code>, <code>"21"</code>…).</td></tr>
+<tr><td>DPS</td><td>The dict of all datapoint values — what <code>status()</code> returns.</td></tr>
+<tr><td>Protocol version</td><td>The LAN wire format: <code>3.1</code>, <code>3.3</code>, <code>3.4</code>, or <code>3.5</code>. Must match the bulb's firmware or you get empty/garbled replies.</td></tr>
+<tr><td>Local key</td><td>16-byte AES key. Encrypts all LAN payloads. Per-device, rotates on re-pair.</td></tr>
+<tr><td>gwId / devId</td><td>The device ID.</td></tr>
+<tr><td>Port 6668</td><td>The TCP port the Tuya LAN protocol speaks on.</td></tr>
+</table>
+
+<h2>Setup once</h2>
+<pre><code>python3 -m venv ~/.venvs/tuya && . ~/.venvs/tuya/bin/activate
+pip install tinytuya</code></pre>
+
+<h2>Core commands</h2>
+<pre><code># 1. Find devices on the LAN (IP + device ID, key shown if known)
+python -m tinytuya scan
+
+# 2. One-time: fetch local keys from Tuya cloud into devices.json
+python -m tinytuya wizard
+
+# 3. Re-scan and merge keys with live IPs / DP snapshots
+python -m tinytuya scan        # reads devices.json automatically</code></pre>
+
+<h2>Control a bulb (Python)</h2>
+<pre><code>import tinytuya
+d = tinytuya.BulbDevice('DEVICE_ID', 'IP', 'LOCAL_KEY', version=3.3)
+d.set_version(3.3)              # try 3.4 / 3.5 if status() is empty
+
+d.status()                     # -> {'dps': {...}}  the DPS dict
+d.turn_on(); d.turn_off()
+d.set_brightness(500)          # range ~10–1000
+d.set_colourtemp(500)          # warm..cool, ~0–1000
+d.set_colour(255, 80, 0)       # R,G,B  (switches to colour mode)
+d.set_white(800, 500)          # brightness, colourtemp</code></pre>
+
+<div class="callout">
+<strong>Version probing.</strong> If <code>status()</code> returns <code>{}</code> or an error,
+the protocol version is wrong. Walk it: <code>3.3 → 3.4 → 3.5 → 3.1</code>. Newer Tuya
+firmware (3.4/3.5) adds a session handshake; tinytuya handles it once the version matches.
+</div>
+
+<h2>Failure → first thing to check</h2>
+<table>
+<tr><th>Symptom</th><th>Most likely cause</th></tr>
+<tr><td><code>scan</code> finds nothing</td><td>Controller not on the same 2.4 GHz subnet / VLAN as the bulb; UDP broadcast blocked.</td></tr>
+<tr><td>Found, but <code>status()</code> empty</td><td>Wrong protocol version, or wrong/missing local key.</td></tr>
+<tr><td>Worked, now refuses</td><td>Local key rotated (you re-paired in the app) — re-run the wizard. Or IP changed.</td></tr>
+<tr><td>Connection refused on 6668</td><td>The app holds a connection — Tuya bulbs accept essentially one local session. Close the app.</td></tr>
+</table>
+
+<h2>Local key, offline (no cloud API)</h2>
+<p>The key is a random 16-char value assigned at pairing — read it, don't compute it. The Intelbras/Izy app caches it on your phone:</p>
+<pre><code># modern (MMKV):  /data/data/&lt;package&gt;/files/thingmmkv/preferences_global_key
+# older  (XML):   /data/data/&lt;package&gt;/shared_prefs/preferences_global_key&lt;n&gt;.xml
+adb shell pm list packages | grep -iE 'intelbras|izy|tuya|smart'   # find &lt;package&gt;</code></pre>
+<p>Copy that one file to your PC, then extract cleartext pairs (records are plain JSON, MMKV isn't encrypted):</p>
+<pre><code>import re, sys
+blob = open(sys.argv[1],'rb').read().decode('latin-1','ignore')
+for m in re.finditer(r'"localKey":"(\w{16})"', blob):
+    w = blob[max(0,m.start()-2000):m.start()+2000]
+    d = re.search(r'"devId":"(\w{18,25})"', w)
+    print(d.group(1) if d else '?', m.group(1))</code></pre>
+<p>Cross-check each <code>devId</code> against your <code>scan</code> output, then hand-write <code>devices.json</code> (<code>id</code>, <code>key</code>, <code>ip</code>, <code>version</code>).</p>
+
+<h2>The honest boundary</h2>
+<p class="note">"No vendor API" means <strong>no cloud at control time</strong>. The easy key-fetch
+(<code>wizard</code>) reads the key from Tuya's cloud <em>once</em>. After that, every command
+above is pure LAN. Fully-offline key extraction (packet capture / app file) avoids even
+that one touch — harder, covered separately.</p>
+
+<p class="note" style="margin-top:2rem">Back to the <a href="../lessons/0001-the-lay-of-the-land.html">lessons</a>.
+Update this sheet whenever a lesson refines the DP map or protocol version for the EWS 410.</p>
+
+<script src="../assets/quiz.js"></script>
+</body></html>

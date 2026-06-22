@@ -1,0 +1,148 @@
+<!DOCTYPE html><html lang="en" data-theme=""><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The Lay of the Land</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head><body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 1 · EWS 410</p>
+<h1>The Lay of the Land</h1>
+<p class="subtitle">What your lamp actually is, how local control works, and finding it on your network — your first tangible win.</p>
+
+<div class="card">
+<strong>By the end of this lesson you will:</strong>
+<ul style="margin:.5rem 0 0">
+<li>Know the mental model for controlling the lamp without the vendor cloud.</li>
+<li>Have <code>tinytuya</code> installed.</li>
+<li>Have run a LAN scan that <strong>finds your bulb</strong> — its IP and device ID printed on your screen.</li>
+</ul>
+</div>
+
+<h2>1 · It isn't really an "Intelbras" lamp</h2>
+<p>The EWS 410 is sold as Intelbras and configured with the <em>Izy Smart</em> app, but
+under the hood it's a <strong>Tuya</strong> device. Izy/Mibo Smart is Intelbras's rebrand of
+the Tuya platform — the same silicon and protocol used by dozens of brands
+(Positivo, Multilaser, Smart Life…).<a href="../RESOURCES.md">[refs]</a>
+That's the single most useful fact in this whole course, because it means a large,
+mature, open-source toolchain already speaks your lamp's language.</p>
+
+<p>Two radios, two jobs:</p>
+<ul>
+<li><strong>Wi-Fi 2.4 GHz</strong> — how the lamp is <em>controlled</em>. This is what we'll use.</li>
+<li><strong>Bluetooth 4.2</strong> — used only to <em>provision</em> (hand the lamp your Wi-Fi
+credentials during setup). Not a day-to-day control channel. So "over Wi-Fi/Bluetooth"
+in practice means: <strong>control = Wi-Fi</strong>.</li>
+</ul>
+
+<h2>2 · The mental model: cloud vs. local</h2>
+<p>When you tap a button in Izy Smart, the normal path is:</p>
+<pre><code>phone  →  Tuya cloud  →  your bulb        (the vendor "API" path)</code></pre>
+<p>Every Tuya bulb <em>also</em> speaks a <strong>local LAN protocol</strong> directly, with no cloud in the loop:</p>
+<pre><code>your controller  →  bulb on the LAN (TCP port 6668, AES-encrypted)   ← what we build</code></pre>
+<p>This local channel is exactly what your agentic harness should use: fast, private,
+works offline. To open it you need <strong>three secrets</strong>:</p>
+
+<table>
+<tr><th>Secret</th><th>Role</th><th>We get it in…</th></tr>
+<tr><td><code>Device ID</code></td><td>Which device</td><td>Lesson 1 (this scan)</td></tr>
+<tr><td><code>IP address</code></td><td>Where on the LAN</td><td>Lesson 1 (this scan)</td></tr>
+<tr><td><code>Local key</code></td><td>AES key to decrypt the traffic</td><td>Lesson 2</td></tr>
+</table>
+
+<div class="callout">
+<strong>The honest boundary.</strong> "Without their API" means <em>no cloud at control
+time</em>. Today's scan is 100% local. The <em>local key</em> in Lesson 2 is the one step
+that — done the easy way — reads from Tuya's cloud <strong>once</strong>. After that, never
+again. A fully-offline key route exists too; we'll cover it as the harder option.
+</div>
+
+<h2>3 · Install the toolchain</h2>
+<p>We'll use <a href="https://github.com/jasonacox/tinytuya">tinytuya</a> — the
+reference Python tool for direct-LAN Tuya control. In a fresh virtualenv:</p>
+<pre><code>python3 -m venv ~/.venvs/tuya
+. ~/.venvs/tuya/bin/activate
+pip install tinytuya</code></pre>
+
+<h2>4 · Your win: find the bulb</h2>
+<p>Make sure the lamp is powered on and your computer is on the <strong>same 2.4 GHz
+network</strong> as the lamp (not a separate guest/IoT VLAN). Then:</p>
+<pre><code>python -m tinytuya scan</code></pre>
+<p>tinytuya sends a UDP broadcast; Tuya devices announce themselves. You should see a
+block like:</p>
+<pre><code>Device Found:
+  Address: 192.168.0.42     ← the IP   (secret #2)
+  Device ID: bf1a2b3c...    ← the gwId (secret #1)
+  Version: 3.3              ← protocol version (note this — matters in Lesson 3)
+  Local Key: (need to run wizard)   ← secret #3, coming in Lesson 2</code></pre>
+
+<p>Two of the three secrets, captured in one command — and you can see the lamp is
+reachable on its local protocol. <strong>Write down the Device ID, IP, and Version.</strong></p>
+
+<div class="callout">
+<strong>If scan finds nothing:</strong> the usual cause is that your controller and the bulb
+are on different subnets/VLANs, or UDP broadcast is filtered. Confirm the lamp works
+in the app first (proves it's online), then check you're on the same SSID. See the
+failure table in the <a href="../reference/tuya-local-cheatsheet.html">cheat sheet</a>.
+</div>
+
+<h2>Check yourself</h2>
+<p>Retrieval, not recognition — answer before you reason it out.</p>
+
+<div class="quiz" id="q1">
+<div class="q">At <em>control time</em>, the local path we're building reaches the bulb by…</div>
+<button class="opt" data-correct="1">talking straight to the bulb on the LAN</button>
+<button class="opt">asking the Tuya cloud to relay it</button>
+<button class="opt">pairing over Bluetooth each time</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">Of the three secrets, which two does today's <code>scan</code> give you?</div>
+<button class="opt" data-correct="1">the device ID and the LAN IP</button>
+<button class="opt">the device ID and local key</button>
+<button class="opt">the local key and LAN IP</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">The lamp's Bluetooth radio is mainly there to…</div>
+<button class="opt" data-correct="1">hand the lamp Wi-Fi during initial setup</button>
+<button class="opt">stream control commands while running</button>
+<button class="opt">replace Wi-Fi when the cloud is down</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>Read this next</h2>
+<p><strong>Primary source:</strong> the
+<a href="https://github.com/jasonacox/tinytuya">tinytuya README</a> — skim the
+"Setup Wizard" and "Network Scanner" sections. It's the highest-trust reference for
+everything we'll do, written by the maintainer.</p>
+
+<div class="ask">
+<strong>Ask your teacher.</strong> Stuck on the scan, on a weird VLAN setup, unsure whether
+your bulb is firmware 3.3 vs 3.5, or curious about the fully-offline key route? Ask me —
+that's what I'm here for. Bring me your real <code>scan</code> output and we'll read it together.
+</div>
+
+<div class="lesson-nav">
+<span>Reference: <a href="../reference/tuya-local-cheatsheet.html">Tuya Local Cheat Sheet</a></span>
+<span>Next: <em>Lesson 2 · Getting the Local Key</em> (built when you've got a successful scan)</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+initQuiz({
+  q1: 'The whole point of local control: your controller speaks the Tuya LAN protocol straight to the bulb on port 6668. The cloud is only on the app’s path, and Bluetooth is provisioning-only.',
+  q2: 'Scan gives you the device ID and the live IP. The local key is the one secret it can’t derive — that’s Lesson 2.',
+  q3: 'Bluetooth 4.2 here is a provisioning channel: it carries your Wi-Fi credentials to the lamp during setup, then steps aside. Control rides Wi-Fi.'
+}, {
+  perfect: 'Model locked in. Run the scan on your own network and bring me the output.',
+  partial: 'Re-read sections 2 and 4, then run the scan for real — the output makes it concrete.'
+});
+</script>
+</body></html>

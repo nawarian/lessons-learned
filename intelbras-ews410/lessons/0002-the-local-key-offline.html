@@ -1,0 +1,173 @@
+<!DOCTYPE html><html lang="en" data-theme=""><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 · The Local Key, Offline</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head><body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 2 · EWS 410</p>
+<h1>The Local Key, Offline</h1>
+<p class="subtitle">The third secret — read straight out of your phone, no cloud account, no developer API.</p>
+
+<div class="card">
+<strong>By the end of this lesson you will:</strong>
+<ul style="margin:.5rem 0 0">
+<li>Understand why the key can only be <em>read</em>, never computed — and where it lives.</li>
+<li>Locate the Intelbras app's key cache file on your phone.</li>
+<li>Extract <strong>device-ID → local-key</strong> pairs for both your bulbs with a tiny parser.</li>
+<li>Have a <code>devices.json</code> ready for Lesson 3's first local command.</li>
+</ul>
+</div>
+
+<h2>1 · The one idea that makes this make sense</h2>
+<p>A Tuya local key is a <strong>random 16-character value the cloud generates when the
+bulb is paired</strong>. It is not derived from the device ID, the MAC, or anything you
+can see on the wire. So there is no algorithm to "crack" — every method of *getting*
+the key is really a method of <em>reading it from somewhere it is already stored</em>:</p>
+
+<table>
+<tr><th>Where the key is stored</th><th>How you'd read it</th><th>Cloud?</th></tr>
+<tr><td>Tuya's servers</td><td>Developer API wizard</td><td>Yes — rejected</td></tr>
+<tr><td><strong>Your phone's app cache</strong></td><td><strong>Read the app's data file</strong></td><td><strong>No (this lesson)</strong></td></tr>
+<tr><td>In-flight app traffic</td><td>mitmproxy capture</td><td>Intercepted by you; fragile</td></tr>
+<tr><td>Nowhere (replaced)</td><td>Reflash ESPHome/LibreTiny</td><td>Never — but invasive</td></tr>
+</table>
+
+<div class="callout">
+<strong>Why your phone has it.</strong> The Intelbras/Izy app doesn't only go through the
+cloud — it also controls bulbs directly on your LAN, which means it must keep each
+bulb's local key <em>on the phone</em>. It's cached in cleartext. We just read it.
+</div>
+
+<h2>2 · Find the key cache file</h2>
+<p>The Intelbras app is built on the Tuya SDK, so it uses Tuya's storage layout. On
+Android the file lives under the app's private data directory:</p>
+<pre><code># modern app versions (MMKV binary store):
+/data/data/&lt;package&gt;/files/thingmmkv/preferences_global_key
+
+# older app versions (XML):
+/data/data/&lt;package&gt;/shared_prefs/preferences_global_key&lt;digits&gt;.xml</code></pre>
+
+<p><code>&lt;package&gt;</code> is the Intelbras app's package name (something like
+<code>br.com.intelbras.…</code> or <code>com.tuya.smartlife</code>). You don't need to guess —
+when you open the app's data folder, you'll see it. If unsure, list packages:</p>
+<pre><code>adb shell pm list packages | grep -iE 'intelbras|izy|tuya|smart'</code></pre>
+
+<p>Now copy <strong>that one file</strong> off the phone, using whatever access you already
+have to the app's data folder. Common ways (any one is enough):</p>
+<ul>
+<li><strong>File-manager with access</strong> → copy it to <code>/sdcard/</code>, then move it to your PC.</li>
+<li><strong>adb</strong> (if the app data is reachable): <code>adb pull /data/data/&lt;package&gt;/files/thingmmkv/preferences_global_key .</code></li>
+<li><strong>adb run-as</strong> (debuggable builds): <code>adb shell run-as &lt;package&gt; cat files/thingmmkv/preferences_global_key &gt; key.mmkv</code></li>
+</ul>
+<p class="note">The file is small. You only need a copy on your computer — don't modify the original.</p>
+
+<h2>3 · Extract the keys</h2>
+<p>Whether the file is MMKV-binary or XML, the device records inside are <strong>cleartext
+JSON</strong> — each contains a <code>devId</code> and its <code>localKey</code>. MMKV isn't encrypted
+by default, so we can pull the pairs out without a full parser. Save this as
+<code>extract_keys.py</code>:</p>
+
+<pre><code>import re, sys
+
+blob = open(sys.argv[1], 'rb').read().decode('latin-1', 'ignore')
+
+# Anchor on each 16-char localKey, then find the devId &amp; name in the same record.
+for m in re.finditer(r'"localKey":"(\w{16})"', blob):
+    key = m.group(1)
+    window = blob[max(0, m.start() - 2000): m.start() + 2000]
+    dev  = re.search(r'"devId":"(\w{18,25})"', window)
+    name = re.search(r'"name":"([^"]{1,40})"', window)
+    print(f'{dev.group(1) if dev else "?":24}  {key}  {name.group(1) if name else ""}')
+</code></pre>
+
+<pre><code>python extract_keys.py preferences_global_key</code></pre>
+
+<p>You should get two lines — one per bulb — like:</p>
+<pre><code>eb402aa51227ed67cbnwj4    a1b2c3d4e5f60718    Sala
+eba18068361d2cd57fbkwv    9f8e7d6c5b4a3210    Quarto</code></pre>
+
+<div class="callout">
+<strong>Cross-check against your scan.</strong> The device IDs must match the ones from
+Lesson 1's scan — <code>eb402aa51227ed67cbnwj4</code> (192.168.1.16) and
+<code>eba18068361d2cd57fbkwv</code> (192.168.1.17). If a devId from the file has no match
+on your LAN, it's a different device on your account — ignore it.
+</div>
+
+<h2>4 · Assemble <code>devices.json</code> — the win</h2>
+<p>Combine the three secrets per bulb into the file tinytuya reads. Hand-write it
+(no wizard needed):</p>
+<pre><code>[
+  { "name": "sala",   "id": "eb402aa51227ed67cbnwj4",
+    "key": "PASTE_KEY_1", "ip": "192.168.1.16", "version": "3.5" },
+  { "name": "quarto", "id": "eba18068361d2cd57fbkwv",
+    "key": "PASTE_KEY_2", "ip": "192.168.1.17", "version": "3.5" }
+]</code></pre>
+
+<p>That's the third secret captured with <strong>zero cloud API</strong>. You now hold
+everything needed to talk to both bulbs locally — which is exactly what Lesson 3 does.</p>
+
+<h2>Check yourself</h2>
+<p>Answer from memory before reasoning it out.</p>
+
+<div class="quiz" id="q1">
+<div class="q">You can't compute a Tuya local key because it is…</div>
+<button class="opt" data-correct="1">a random value the cloud assigned at pairing</button>
+<button class="opt">a hash derived from the device-ID value</button>
+<button class="opt">encrypted with the bulb hardware serial</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">The reason your phone holds the key at all is that…</div>
+<button class="opt" data-correct="1">the app controls bulbs over the LAN directly</button>
+<button class="opt">the bulb uploads the key to the phone</button>
+<button class="opt">the key is printed on the bulb packaging</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">Inside the app's storage file, the local keys are stored as…</div>
+<button class="opt" data-correct="1">cleartext JSON next to the device IDs</button>
+<button class="opt">AES blobs needing the cloud token</button>
+<button class="opt">a salted bcrypt hash per device row</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>Read this next</h2>
+<p><strong>Primary source:</strong> the
+<a href="https://gist.github.com/udnaan/b3947a0dadf23bfd47ad54dd02e0ccef">"decode devices from a rooted device for Smart Life" gist</a> — the community
+reference for the on-phone file location and the MMKV-vs-XML shift. Skim the comments;
+they track exactly which file holds the keys as the app updates.</p>
+
+<div class="ask">
+<strong>Ask your teacher.</strong> Can't find the package, file looks like binary noise, the
+regex prints nothing, or you only get one bulb instead of two? Send me a hexdump or the
+first few hundred bytes (redact the keys) and we'll figure out your app's exact layout
+together. If your access turns out not to reach <code>/data/data</code>, tell me — we'll
+pivot to the mitmproxy route.
+</div>
+
+<div class="lesson-nav">
+<span>Prev: <a href="0001-the-lay-of-the-land.html">Lesson 1 · The Lay of the Land</a></span>
+<span>Reference: <a href="../reference/tuya-local-cheatsheet.html">Tuya Local Cheat Sheet</a></span>
+<span>Next: <em>Lesson 3 · First Local Command</em> (built once you've got both keys)</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+initQuiz({
+  q1: 'It’s assigned randomly by Tuya’s cloud when the device is paired and stored server-side and on your phone — nothing about the device lets you regenerate it, which is why "reading" beats "cracking".',
+  q2: 'The app does local LAN control, so it must cache each bulb’s key on the phone. That cache is your offline source — no developer API involved.',
+  q3: 'Tuya’s MMKV store isn’t encrypted by default; the device records (including localKey) sit in plain JSON, which is why a simple regex extracts them.'
+}, {
+  perfect: 'Three secrets in hand. Build devices.json and bring it to Lesson 3 — we make a bulb obey.',
+  partial: 'Re-read section 1 (why read, not compute) — that’s the idea worth keeping. Then assemble devices.json.'
+});
+</script>
+</body></html>
