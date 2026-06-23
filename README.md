@@ -11,6 +11,7 @@ reason for learning it), backed by **reference** cheat sheets you return to late
 | --- | --- | --- |
 | [`linux-package-removal/`](./linux-package-removal/) | Confidently declutter a Linux machine — know where any installed thing came from, then remove it cleanly. | 5 lessons (complete) |
 | [`intelbras-ews410/`](./intelbras-ews410/) | Control the Intelbras EWS 410 lamp **locally** so an agentic harness can change the lights on prompt. | Lesson 1 (in progress) |
+| [`crdts/`](./crdts/) | Grok CRDTs well enough to reason about a p2p, offline-first collaborative whiteboard the harness is building. | Lesson 1 (in progress) |
 
 ## How each topic folder is organized
 

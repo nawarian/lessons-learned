@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="en" data-theme=""><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · CRDT Glossary</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  dl.glossary { margin: 1.5rem 0; }
+  dl.glossary dt { font-weight: 600; margin-top: 1.1rem; font-family: var(--mono); font-size: .92rem; }
+  dl.glossary dd { margin: .25rem 0 0; }
+  dl.glossary dd .seen { font-size: .78rem; color: var(--muted); font-style: italic; }
+  @media print { .theme-toggle { display: none; } body { font-size: 11pt; } }
+</style>
+</head><body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Reference · CRDTs</p>
+<h1>CRDT Glossary</h1>
+<p class="subtitle">The shared vocabulary of the course. Terms are defined once here and used
+consistently in every lesson. Grows as the course does.</p>
+
+<div class="callout">
+Throughout, the running example is a <strong>collaborative whiteboard</strong>: shapes on a
+shared canvas, syncing peer-to-peer and offline. Each definition notes the whiteboard
+analogue where one exists.
+</div>
+
+<h2>Core concepts</h2>
+<dl class="glossary">
+
+<dt>CRDT</dt>
+<dd>Conflict-free Replicated Data Type. A data structure whose merge depends only on the
+data, never on the order updates arrived in — so replicas converge without a central
+server or locking. <span class="seen">L1</span></dd>
+
+<dt>Replica</dt>
+<dd>One independent copy of the shared state — e.g. the whiteboard as it exists on Alice's
+laptop. Each peer holds a replica and edits it locally. <span class="seen">L1</span></dd>
+
+<dt>Convergence</dt>
+<dd>The property that replicas which have seen the same updates hold identical state.
+The goal of every CRDT. <span class="seen">L1</span></dd>
+
+<dt>Strong Eventual Consistency (SEC)</dt>
+<dd>The formal promise: any two replicas that have received the <em>same set</em> of updates
+have the <em>same state</em>, regardless of order, duplication, or delay. CRDTs achieve it
+by construction. <span class="seen">L1</span></dd>
+
+<dt>Divergence</dt>
+<dd>The failure CRDTs prevent: two replicas permanently disagreeing because they resolved
+the same concurrent edits differently (e.g. "last to arrive wins" with different arrival
+orders). <span class="seen">L1</span></dd>
+
+<dt>Merge</dt>
+<dd>The function that combines two replica states (or a state and an update) into one. For
+convergence it must obey the three laws below. <span class="seen">L1</span></dd>
+
+<dt>Concurrent updates</dt>
+<dd>Two updates made without either having seen the other (e.g. both peers offline). These
+are the updates a CRDT must reconcile deterministically. <span class="seen">L1</span></dd>
+
+</dl>
+
+<h2>The three merge laws</h2>
+<dl class="glossary">
+<dt>Commutative</dt>
+<dd><code>merge(a, b) = merge(b, a)</code>. Order of merging doesn't matter — defeats network
+<em>reordering</em>. <span class="seen">L1</span></dd>
+
+<dt>Associative</dt>
+<dd><code>merge(merge(a, b), c) = merge(a, merge(b, c))</code>. Grouping doesn't matter — defeats
+<em>batching</em>. <span class="seen">L1</span></dd>
+
+<dt>Idempotent</dt>
+<dd><code>merge(a, a) = a</code>. Re-merging the same value is a no-op — defeats <em>duplicate
+delivery</em>. <span class="seen">L1</span></dd>
+</dl>
+
+<h2>CRDT types seen so far</h2>
+<dl class="glossary">
+<dt>LWW-Register</dt>
+<dd>Last-Writer-Wins Register. Holds one value tagged with a timestamp (+ replica id for
+tiebreak); merge keeps the higher-timestamped write. Whiteboard use: a single shape
+property such as <code>color</code> or <code>x</code>. Caveat: the losing write is silently
+discarded. <span class="seen">L1</span></dd>
+</dl>
+
+<h2>Terms named but not yet taught</h2>
+<p class="note">Defined properly in later lessons; listed so the forward references make sense.</p>
+<dl class="glossary">
+<dt>Semilattice</dt>
+<dd>The algebraic structure formed by a set + a merge obeying the three laws. The reason
+convergence is <em>guaranteed</em> rather than hoped for. <span class="seen">L2 (preview)</span></dd>
+
+<dt>State-based (CvRDT) vs operation-based (CmRDT)</dt>
+<dd>Two ways to ship updates: send the whole merged state, or send individual commuting
+operations. <span class="seen">L2 (preview)</span></dd>
+
+<dt>Logical clock / Lamport timestamp</dt>
+<dd>A monotonically increasing counter used as <code>ts</code> instead of wall-clock time, so
+causally-ordered events compare correctly. <span class="seen">L2 (preview)</span></dd>
+
+<dt>OR-Set, tombstone</dt>
+<dd>Observed-Remove Set and its deletion marker — for the <em>set of shapes</em> on the board,
+handling delete-vs-concurrent-edit. <span class="seen">L3 (preview)</span></dd>
+
+<dt>Sequence CRDT (RGA / YATA)</dt>
+<dd>Keeps an ordered list convergent — for z-order of shapes and text inside notes.
+<span class="seen">L5 (preview)</span></dd>
+</dl>
+
+<div class="lesson-nav">
+<span>Back to: <a href="../lessons/0001-the-convergence-promise.html">Lesson 1 · The Convergence Promise</a></span>
+<span>Hub: <a href="https://crdt.tech/glossary">crdt.tech glossary</a> (authoritative)</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body></html>

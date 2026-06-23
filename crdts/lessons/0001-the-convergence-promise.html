@@ -1,0 +1,183 @@
+<!DOCTYPE html><html lang="en" data-theme=""><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The Convergence Promise</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head><body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 1 · CRDTs</p>
+<h1>The Convergence Promise</h1>
+<p class="subtitle">Two whiteboards get the same edits in a different order — and must end up identical. Build the smallest data type that guarantees it.</p>
+
+<div class="card">
+<strong>By the end of this lesson you will:</strong>
+<ul style="margin:.5rem 0 0">
+<li>Be able to state exactly what "conflict-free" buys you — the <strong>convergence promise</strong>.</li>
+<li>Have built an <strong>LWW-Register</strong> in ~6 lines of JS and watched two replicas converge no matter the order.</li>
+<li>Know the <strong>three laws</strong> a merge must obey, and the one update LWW silently throws away.</li>
+</ul>
+</div>
+
+<h2>1 · The whiteboard problem</h2>
+<p>Your harness is building a collaborative whiteboard: shapes on a shared canvas,
+syncing peer-to-peer, working offline. Picture one rectangle. Alice and Bob both
+have it on screen. The train goes into a tunnel — both are now <strong>offline</strong>.</p>
+<ul>
+<li>Alice recolors the rectangle <strong>red</strong>.</li>
+<li>Bob, independently, recolors it <strong>blue</strong>.</li>
+</ul>
+<p>They reconnect. Each must send the other what they did. The brutal fact of
+peer-to-peer is that you <em>cannot</em> control how those messages arrive: they can be
+<strong>reordered</strong>, <strong>delayed</strong>, <strong>duplicated</strong>, or
+batched. The naive fix — "last message to arrive wins" — means Alice's board and
+Bob's board pick the winner based on <em>network timing</em>. Different timing,
+different result: the two boards <strong>diverge</strong> and stay diverged. That is
+the bug CRDTs exist to kill.</p>
+
+<div class="callout">
+A <strong>CRDT</strong> (Conflict-free Replicated Data Type) is a data structure whose
+merge depends only on <em>the data</em>, never on the order it arrived in. Get that,
+and every replica that has seen the same edits agrees — automatically, with no
+central server and no locking.<a href="https://crdt.tech/" title="crdt.tech research hub">[crdt.tech]</a>
+</div>
+
+<h2>2 · The promise, stated precisely</h2>
+<p>This is the guarantee, called <strong>Strong Eventual Consistency</strong>:</p>
+<blockquote>Any two replicas that have received the <strong>same set</strong> of updates
+hold the <strong>same state</strong> — regardless of the order, duplication, or delay
+of delivery.<a href="https://asc.di.fct.unl.pt/~nmp/pubs/sss-2011.pdf" title="Shapiro et al., SSS 2011">[Shapiro&nbsp;2011]</a></blockquote>
+<p>Note what it does <em>not</em> promise: it won't read your mind about which color
+"should" win. It promises only that everyone ends up <strong>agreeing</strong> on the
+same answer. Picking a <em>sensible</em> answer is the data type's job — which is why
+there's a whole zoo of CRDTs, one per kind of data. Today we build the simplest.</p>
+
+<h2>3 · Build it: the LWW-Register</h2>
+<p>A <strong>register</strong> is a cell holding one value — perfect for one property of
+one shape: its <code>color</code>, or its <code>x</code>. <strong>LWW</strong> =
+Last-Writer-Wins. The trick: don't store just the value, store the value
+<em>tagged with when it was written</em>. Paste this into a Node REPL or your browser
+console:</p>
+
+<pre><code>// An LWW-Register: a value, plus when and who wrote it.
+const reg = (value, ts, replica) =&gt; ({ value, ts, replica });
+
+// merge: keep the write with the higher timestamp.
+// On a tie, the replica id decides — so the rule is fully deterministic.
+function merge(a, b) {
+  if (a.ts !== b.ts)   return a.ts &gt; b.ts ? a : b;
+  return a.replica &gt; b.replica ? a : b;
+}</code></pre>
+
+<p>That's the entire CRDT. Now reproduce the tunnel. Alice wrote <code>red</code> at
+logical time 3; Bob wrote <code>blue</code> at time 5:</p>
+
+<pre><code>const alice = reg('red',  3, 'A');
+const bob   = reg('blue', 5, 'B');
+
+merge(alice, bob).value              // 'blue'  — ts 5 beats ts 3
+merge(bob, alice).value              // 'blue'  — swap the order: same answer
+merge(merge(alice, bob), bob).value  // 'blue'  — Bob's msg arrives twice: no change
+merge(merge(bob, alice), alice).value// 'blue'  — any tangle of re-delivery: still blue</code></pre>
+
+<p>Run all four lines. Every one returns <code>blue</code>. <strong>That</strong> is the
+convergence promise, in your own console: reorder the messages, duplicate them,
+nest the merges however the network felt like — the rectangle ends up blue on both
+boards. No server adjudicated. The math did.</p>
+
+<div class="callout">
+<strong>Where does <code>ts</code> come from?</strong> Wall-clock time is tempting but
+treacherous (clocks disagree). Real systems use a <strong>logical clock</strong> — a
+counter that only ever goes up — often a <em>Lamport timestamp</em>, with the replica
+id as the tiebreak you saw above. We'll build that properly in a later lesson; for
+now, "a number that only increases" is enough.
+</div>
+
+<h2>4 · Why it converges — the three laws</h2>
+<p>The four lines above weren't luck. <code>merge</code> works because it obeys three
+properties — the <em>only</em> theory you need today:</p>
+<table>
+<tr><th>Law</th><th>Means</th><th>Defeats</th></tr>
+<tr><td><strong>Commutative</strong></td><td><code>merge(a,b) = merge(b,a)</code></td><td>reordering</td></tr>
+<tr><td><strong>Associative</strong></td><td><code>merge(merge(a,b),c) = merge(a,merge(b,c))</code></td><td>batching / grouping</td></tr>
+<tr><td><strong>Idempotent</strong></td><td><code>merge(a,a) = a</code></td><td>duplicate delivery</td></tr>
+</table>
+<p>Reordering, batching, and duplication are <em>exactly</em> the three things a p2p
+network does to your messages. A merge that is immune to all three cannot be pushed
+off the single answer the data determines. That immunity is what "conflict-free"
+literally means — and in Lesson 2 we'll see these three laws are the definition of a
+<strong>semilattice</strong>, the structure underneath every CRDT.</p>
+
+<h2>5 · The honest catch</h2>
+<p>Look again at what happened: Alice's <code>red</code> didn't merge with Bob's
+<code>blue</code> — it was <strong>silently discarded</strong>. LWW converges by
+<em>throwing one writer's work away</em>. For a shape's color that's usually fine
+(somebody had to win). For "Bob deleted the shape while Alice was still dragging it,"
+or "two people typing in the same sticky note," dropping a whole update is a
+data-loss bug. Different data needs a merge that <em>keeps</em> more — that's the
+whole rest of the course (sets of shapes, then sequences for text and z-order).</p>
+
+<h2>Check yourself</h2>
+<p>Retrieval, not recognition — answer before you reason it out.</p>
+
+<div class="quiz" id="q1">
+<div class="q">Why does "last message to arrive wins" break for offline edits?</div>
+<button class="opt" data-correct="1">different replicas see different orders</button>
+<button class="opt">timestamps drift between the machines</button>
+<button class="opt">packets arrive corrupted over wifi</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+<div class="q">Merging the very same update twice changes nothing. That property is called…</div>
+<button class="opt" data-correct="1">idempotent</button>
+<button class="opt">associative</button>
+<button class="opt">commutative</button>
+<div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+<div class="q">When Alice and Bob concurrently recolor one shape, the LWW-Register…</div>
+<button class="opt" data-correct="1">keeps one, discards the other write</button>
+<button class="opt">blends both colors into a mix</button>
+<button class="opt">stores both colors and asks user</button>
+<div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>Read this next</h2>
+<p><strong>Primary source:</strong> Jake Lazaroff's
+<a href="https://jakelazaroff.com/words/an-interactive-intro-to-crdts/">An Interactive
+Intro to CRDTs</a>. It's the best companion to this lesson — embedded playgrounds
+where you toggle the network on and off and watch replicas (including an LWW
+register) converge live, building up to a collaborative pixel editor that's a cousin
+of your whiteboard. Read the first two sections.</p>
+
+<div class="ask">
+<strong>Ask your teacher.</strong> Want to see the LWW-Register fail on data where
+dropping a write <em>matters</em>? Curious how Lamport timestamps actually generate
+that <code>ts</code>? Wondering whether your whiteboard's color edits should be LWW at
+all? Ask me — and tell me whether the harness is building on Yjs/Automerge or a
+hand-rolled model, so I can aim the next lessons.
+</div>
+
+<div class="lesson-nav">
+<span>Reference: <a href="../reference/crdt-glossary.html">CRDT Glossary</a></span>
+<span>Next: <em>Lesson 2 · The Merge Law (semilattices, state- vs op-based)</em> — built when you've run the four merges.</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+initQuiz({
+  q1: 'Arrival order is decided by the network, and the network gives each peer a different order. Tie the winner to arrival order and the two boards disagree — divergence. A CRDT decides from the data instead.',
+  q2: 'Idempotent: merge(a,a) = a. It’s what makes duplicate delivery harmless — re-applying Bob’s message a second time can’t move the result.',
+  q3: 'LWW converges by keeping the higher-timestamped write and discarding the loser. Cheap and correct for a color; genuine data loss for things you can’t afford to drop — which motivates the richer CRDTs ahead.'
+}, {
+  perfect: 'Promise locked in. Run the four merges for real, then tell me whether your whiteboard uses a CRDT library or a hand-rolled model.',
+  partial: 'Re-read §2 (the promise) and §4 (the three laws), then run the four merge lines — watching them all return blue makes it click.'
+});
+</script>
+</body></html>
