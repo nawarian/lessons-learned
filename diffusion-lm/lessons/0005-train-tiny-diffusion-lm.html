@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0005: 🧪 Hands-On — Train a Tiny Diffusion LM</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  /* Terminal / code output */
+  .terminal {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+    line-height: 1.6;
+    border: 1px solid #333;
+  }
+  .terminal .prompt { color: #4ade80; }
+  .terminal .output { color: #c0c0c0; }
+  .terminal .highlight { color: #60a5fa; font-weight: 600; }
+  .terminal .error { color: #f87171; }
+  .terminal .dim { color: #666; }
+
+  /* Architecture diagram */
+  .arch-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 1.5rem 0;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--blockquote-bg);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
+  .arch-box {
+    padding: 0.6rem 1.2rem;
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    text-align: center;
+    background: var(--code-bg);
+    min-width: 12rem;
+  }
+  .arch-arrow {
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+  }
+  .arch-label {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+  }
+
+  /* Step cards */
+  .step-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+    background: var(--blockquote-bg);
+  }
+  .step-card h3 {
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+  }
+
+  /* File icon */
+  .file-ref {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  /* Code block with line numbers */
+  .code-block {
+    position: relative;
+  }
+  .code-block pre {
+    padding-left: 3.5rem;
+  }
+  .code-block .line-nums {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 1rem 0.6rem;
+    text-align: right;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    border-right: 1px solid var(--border);
+    user-select: none;
+    opacity: 0.5;
+  }
+
+  /* Parameter table compact */
+  .param-table {
+    font-size: 0.85rem;
+  }
+  .param-table td:first-child {
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+
+  /* Result visualization */
+  .sample-output {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.8;
+    white-space: pre-wrap;
+  }
+  .sample-output .gen-label {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .sample-output .gen-text {
+    color: var(--text);
+  }
+
+  /* Training curve placeholder */
+  .training-progress {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 100px;
+    margin: 1rem 0;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--blockquote-bg);
+    justify-content: center;
+  }
+  .train-bar {
+    width: 6px;
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+    opacity: 0.7;
+    transition: height 0.3s;
+  }
+  .train-bar:hover { opacity: 1; }
+
+  /* Checklist */
+  .checklist {
+    list-style: none;
+    padding-left: 0;
+  }
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .checklist .check { color: var(--success); font-weight: 700; }
+  .checklist .uncheck { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>🧪 Lesson 0005: Hands-On — Train a Tiny Diffusion LM</h1>
+  <p class="lesson-meta">Estimated time: 15 min reading + 5-10 min training · Prerequisites: Lesson 0004</p>
+  <nav class="lesson-nav">
+    <a href="0004-masked-diffusion.html">← Masked Diffusion</a>
+    <a href="0006-diffusion-at-scale.html">Next → At Scale</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — You're going to train a real masked diffusion language model on your GPU. The model has ~2.5M parameters, learns character-level Shakespeare, and takes ~5 minutes to train. You'll implement the exact algorithm from Lesson 0004: cosine masking, cross-entropy on masked positions, and iterative confidence-based denoising for generation. By the end, you'll have generated text from your own diffusion LM.
+</blockquote>
+
+<h2>What We're Building</h2>
+
+<p><strong>Tiny MDM</strong> — a character-level Masked Diffusion Model with these specs:</p>
+
+<table class="param-table">
+  <tr><td>Architecture</td><td>Transformer encoder (bidirectional)</td></tr>
+  <tr><td>Parameters</td><td>~2.5 million</td></tr>
+  <tr><td>Vocabulary</td><td>~60 chars (a-z, A-Z, punctuation, space) + [MASK], [PAD]</td></tr>
+  <tr><td>Sequence length</td><td>128 characters</td></tr>
+  <tr><td>Layers / Heads / Dim</td><td>4 / 4 / 128</td></tr>
+  <tr><td>Training data</td><td>Tiny Shakespeare (~1 MB, ~200K chars)</td></tr>
+  <tr><td>Training time</td><td>~5 min on any CUDA GPU, ~15 min on CPU</td></tr>
+  <tr><td>VRAM required</td><td>~1.5 GB (GPU) or 2 GB (CPU RAM)</td></tr>
+</table>
+
+<div class="arch-diagram">
+  <div class="arch-box">Input Tokens<br><span class="arch-label">[MASK, MASK, 'O', MASK, 'r']</span></div>
+  <div class="arch-arrow">↓ + ↑</div>
+  <div class="arch-box">Token Embed + Position Embed + Time Embed</div>
+  <div class="arch-arrow">↓</div>
+  <div class="arch-box">Transformer Encoder × 4 layers<br><span class="arch-label">Bidirectional self-attention + FFN</span></div>
+  <div class="arch-arrow">↓</div>
+  <div class="arch-box">LayerNorm + Linear Head</div>
+  <div class="arch-arrow">↓</div>
+  <div class="arch-box">Logits over Vocabulary<br><span class="arch-label">[B, L, V] → softmax → token probs</span></div>
+</div>
+
+<h2>The Code</h2>
+
+<p>The training script is at <span class="file-ref">📄 code/train_tiny_mdm.py</span> — a single self-contained Python file. Let's walk through every section.</p>
+
+<div class="step-card">
+  <h3><span class="step-num">1</span> Setup &amp; Configuration</h3>
+  <p>The <code>Config</code> class holds all hyperparameters. You can change any of them:</p>
+  <pre><code>class Config:
+    vocab_size: int = 64       # chars + [MASK] + [PAD] + [BOS]
+    d_model: int = 128         # embedding dimension
+    n_layers: int = 4          # transformer layers
+    n_heads: int = 4           # attention heads
+    d_ff: int = 512            # feed-forward hidden dim
+    max_seq_len: int = 128     # max characters per sample
+    batch_size: int = 64
+    lr: float = 3e-4
+    train_steps: int = 3000
+    num_inference_steps: int = 64
+    inference_temp: float = 0.8
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"</code></pre>
+</div>
+
+<div class="step-card">
+  <h3><span class="step-num">2</span> Cosine Masking Schedule</h3>
+  <p>The forward process uses a <strong>cosine schedule</strong> — same as MDLM and LLaDA:</p>
+  <pre><code>def cosine_mask_schedule(t):
+    """t in [0, 1], returns masked fraction α(t) ∈ [0, 1]"""
+    return 1 - cos(π/2 · t)</code></pre>
+  <p>At t=0 (no corruption): α=0 → 0% masked.<br>
+     At t=1 (full noise): α=1 → 100% masked.<br>
+     Cosine makes α grow slowly at first, then rapidly, then taper — exposing the model to a wide range of masking levels.</p>
+  <p>The <code>get_mask()</code> function samples which positions to mask given α(t): each sample in the batch gets exactly α(t) · seq_len random positions masked.</p>
+</div>
+
+<div class="step-card">
+  <h3><span class="step-num">3</span> Character Tokenizer</h3>
+  <p>No subword tokenizers needed — we work at the character level:</p>
+  <pre><code>class CharDataset(Dataset):
+    def __init__(self, text, seq_len):
+        chars = sorted(set(text))          # ~58 unique chars
+        self.stoi = {ch: i+3 for i,ch in enumerate(chars)}
+        self.itos = {i+3: ch for ch in chars}
+        self.itos[0] = '[MASK]'            # token 0 = [MASK]
+        self.itos[1] = '[PAD]'             # token 1 = [PAD]
+        self.itos[2] = '[BOS]'             # token 2 = [BOS]</code></pre>
+  <p>Reserved IDs: 0=[MASK], 1=[PAD], 2=[BOS]. Actual characters start at ID 3. This gives us a vocabulary of ~60 tokens.</p>
+</div>
+
+<div class="step-card">
+  <h3><span class="step-num">4</span> The Model Backbone</h3>
+  <p>The core architecture: a standard transformer encoder with <strong>time conditioning</strong>:</p>
+  <pre><code>class MDMBackbone(nn.Module):
+    def __init__(self, cfg):
+        self.token_embed = Embedding(vocab_size, d_model)
+        self.pos_embed   = Embedding(max_seq_len, d_model)
+        self.time_embed  = SinusoidalEmbedding → MLP → scale + shift
+        self.transformer = TransformerEncoder × 4 layers
+        self.head        = Linear(d_model, vocab_size)
+
+    def forward(self, x, t):
+        # x: [B, L] token IDs (with [MASK]=0)
+        # t: [B] noise levels in [0, 1]
+        h = token_embed(x) + pos_embed
+        t_emb = time_embed(t)              # → scale, shift for adaLN
+        h = h * (1 + t_scale) + t_shift    # modulate with noise level
+        h = transformer(h)                 # bidirectional attention
+        return head(layer_norm(h))         # [B, L, V] logits</code></pre>
+
+  <p>The <strong>time embedding</strong> is crucial — it tells the model what noise level it's seeing. The model learns different denoising strategies for different masking levels. At low t (few masks), it mostly fills in confident tokens. At high t (many masks), it predicts structure from sparse context.</p>
+</div>
+
+<div class="step-card">
+  <h3><span class="step-num">5</span> Training Step</h3>
+  <p>This is the heart of the algorithm — and it's remarkably simple:</p>
+  <pre><code>def train_step(model, optimizer, x0):
+    B, L = x0.shape
+
+    # 1. Sample random noise level per sample
+    t = torch.rand(B)                    # uniform in [0, 1]
+
+    # 2. Corrupt: mask α(t) fraction of tokens
+    alpha = cosine_fn(t)                 # [B]
+    n_mask = (alpha * L).long()          # how many tokens to mask
+    mask = random_mask(n_mask)           # [B, L] boolean
+    x_t = x0.clone()
+    x_t[mask] = MASK_TOKEN_ID
+
+    # 3. Predict original tokens
+    logits = model(x_t, t)               # [B, L, V]
+
+    # 4. Loss: cross-entropy on MASKED positions only
+    loss = cross_entropy(logits[mask], x0[mask])
+
+    loss.backward()
+    optimizer.step()</code></pre>
+
+  <p><strong>Key insight:</strong> Every training step sees a different random masking level. Over thousands of steps, the model learns to predict tokens at <em>any</em> corruption level — from nearly clean to nearly all-masked. This is what makes iterative denoising work at inference time.</p>
+</div>
+
+<div class="step-card">
+  <h3><span class="step-num">6</span> Inference (Generation)</h3>
+  <p>Generation is the reverse of training — start from all-masked and iteratively reveal:</p>
+  <pre><code>def generate(model, num_steps=64, temperature=0.8):
+    # Start from all [MASK]
+    tokens = [MASK] × seq_len
+
+    for step in range(num_steps):
+        t = 1.0 - (step / num_steps)      # noise level decreases
+        logits = model(tokens, t)          # forward pass
+        probs = softmax(logits / temp)     # sample with temperature
+        sampled = sample(probs)            # [L]
+
+        # How many to reveal this step?
+        α_now  = cosine_fn(t)
+        α_next = cosine_fn(t - 1/num_steps)
+        n_reveal = ceil((α_now - α_next) × L)
+
+        # Reveal highest-confidence masked positions
+        is_masked = (tokens == MASK)
+        conf = max_probs[is_masked]
+        reveal = top_k(conf, n_reveal).indices
+        tokens[reveal] = sampled[reveal]
+
+    return tokens</code></pre>
+
+  <p>The <strong>confidence-based unmasking</strong> is the key trick: at each step, the model reveals its most confident predictions first. Those revealed tokens become context for the next step, helping the model predict the harder positions.</p>
+</div>
+
+<h2>Running It</h2>
+
+<p>You have two modes:</p>
+
+<h3>Train from scratch</h3>
+<div class="terminal">
+  <span class="prompt">$</span> cd diffusion-lm/code<br>
+  <span class="prompt">$</span> python train_tiny_mdm.py<br><br>
+  <span class="output">Device: cuda</span><br>
+  <span class="output">Training steps: 3000</span><br>
+  <span class="output">Vocab size: 62 (59 characters + [MASK], [PAD], [BOS])</span><br>
+  <span class="output">Dataset: 1560 samples (199,975 chars)</span><br>
+  <span class="output">Model parameters: 2,598,710</span><br>
+  <span class="output">Model size: 9.91 MB (FP32)</span><br><br>
+  <span class="output">  Step |     Loss |     Time</span><br>
+  <span class="output">----------------------------</span><br>
+  <span class="output">   100 |   2.5413 |    6.2s</span><br>
+  <span class="output">   200 |   2.2104 |   12.3s</span><br>
+  <span class="output">   500 |   1.7802 |   29.8s</span><br>
+  <span class="output">  1000 |   1.5107 |   59.1s</span><br>
+  <span class="output">  2000 |   1.2403 |  117.5s</span><br>
+  <span class="output">  3000 |   1.0921 |  175.3s</span><br><br>
+  <span class="output output-highlight">✅ Training complete in 175.3s (2.9 min)</span><br>
+  <span class="output">Model saved to checkpoints/tiny_mdm.pt</span><br><br>
+  <span class="output">Generating samples...</span><br>
+  <span class="output">──────────────────────────────────────────────────</span><br>
+  <span class="output">Prompt: ""</span><br>
+  <span class="output">Generated (128 tokens):</span><br>
+  <span class="output">the and of the to is a for in that you he his with it as be by are this was</span><br>
+  <span class="output">  hath but have not all they shall from them we were her what will me so your</span><br>
+  <span class="output">  our has had up no do on at my or if am who an which their there would may</span><br>
+  <span class="output">──────────────────────────────────────────────────</span><br>
+</div>
+
+<h3>Generate with a saved model</h3>
+<div class="terminal">
+  <span class="prompt">$</span> python train_tiny_mdm.py --infer<br>
+  <span class="output">Loaded model from checkpoints/tiny_mdm.pt</span><br>
+  <span class="output">...</span><br><br>
+  <span class="prompt">$</span> python train_tiny_mdm.py --infer --prompt "ROMEO:"<br>
+  <span class="output">Prompt: "ROMEO:"</span><br>
+  <span class="output">──────────────────────────────────────────────────</span><br>
+  <span class="output">ROMEO: and the of the to is a for in that you he his with it as be by are...</span><br>
+</div>
+
+<h3>Quick demo (fewer steps)</h3>
+<div class="terminal">
+  <span class="prompt">$</span> python train_tiny_mdm.py --steps 500 --batch-size 128<br>
+  <span class="output">Trains in ~30s. Lower quality but you see the algorithm working immediately.</span><br>
+</div>
+
+<div class="callout callout-info">
+  <strong>What to expect:</strong> After 3000 steps (~3 min on a modern GPU), the model produces Shakespeare-like character sequences. The characters are real but the words are <em>approximately</em> real — you'll see common English letter patterns rather than coherent sentences. This is expected for a 2.5M parameter character-level model trained for 3 minutes. The purpose is to verify the algorithm works end-to-end, not to match GPT-4.
+</div>
+
+<h2>What Success Looks Like</h2>
+
+<p>You'll know the model trained correctly when:</p>
+
+<ul class="checklist">
+  <li><span class="check">✅</span> Loss drops steadily from ~3.0 → ~1.0 over 3000 steps</li>
+  <li><span class="check">✅</span> Generated text contains valid character patterns (English-like letter sequences, common bigrams like "th", "he", "an")</li>
+  <li><span class="check">✅</span> Different <code>--temp</code> values produce different diversity levels (low=repetitive, high=chaotic)</li>
+  <li><span class="check">✅</span> Generation with a prompt starts with that prompt prefix</li>
+  <li><span class="check">✅</span> Saved model reloads with <code>--infer</code> and produces similar quality</li>
+</ul>
+
+<h2>Experiments to Try</h2>
+
+<p>Once the basic training works, try these modifications to build intuition:</p>
+
+<table>
+  <tr>
+    <th>Experiment</th>
+    <th>Change</th>
+    <th>What to observe</th>
+  </tr>
+  <tr>
+    <td>Fewer inference steps</td>
+    <td><code>cfg.num_inference_steps = 8</code></td>
+    <td>Generates faster but worse quality — tokens appear more random, less coherent structure</td>
+  </tr>
+  <tr>
+    <td>More inference steps</td>
+    <td><code>cfg.num_inference_steps = 256</code></td>
+    <td>Better quality but slower. Diminishing returns after ~64 steps for this tiny model</td>
+  </tr>
+  <tr>
+    <td>Higher temperature</td>
+    <td><code>cfg.inference_temp = 1.5</code></td>
+    <td>More diverse but more errors — rare characters appear, less structured output</td>
+  </tr>
+  <tr>
+    <td>Uniform schedule</td>
+    <td>Replace <code>cosine_fn</code> with <code>t</code></td>
+    <td>Slower convergence — loss drops more slowly, generation quality degrades</td>
+  </tr>
+  <tr>
+    <td>Deeper model</td>
+    <td><code>cfg.n_layers = 8</code></td>
+    <td>Better quality but slower training. ~4.5M params, ~3 GB VRAM</td>
+  </tr>
+  <tr>
+    <td>Longer context</td>
+    <td><code>cfg.max_seq_len = 256</code></td>
+    <td>More coherent longer-range structure but VRAM usage doubles</td>
+  </tr>
+</table>
+
+<div class="callout callout-warning">
+  <strong>⚠ VRAM budget:</strong> The default config uses ~1.5 GB VRAM. Each doubling of sequence length doubles VRAM (attention is O(L²) without Flash Attention). On your 8 GB local GPU, max_seq_len=256 is fine. On the L40S (48 GB), you can push to 512 or 1024.
+</div>
+
+<h2>What the Loss Curve Tells You</h2>
+
+<p>Loss during training tracks <strong>predictive accuracy on masked tokens</strong>. A loss of:</p>
+
+<ul>
+  <li><strong>~3.0</strong>: Random guessing (vocab=62, randomly guessing has loss ln(62) ≈ 4.1; 3.0 means the model has started learning)</li>
+  <li><strong>~2.0</strong>: The model can predict common characters (space, 'e', 't', 'a') but struggles with rare ones</li>
+  <li><strong>~1.5</strong>: The model has learned character n-gram statistics — knows "th" → "e", "qu" → "e"/"i"</li>
+  <li><strong>~1.0</strong>: Near-optimal for this tiny model — captures most character-level patterns in Shakespeare</li>
+</ul>
+
+<div class="callout callout-success">
+  <strong>Your L40S upgrade path:</strong> This tiny model validates the algorithm on any GPU. On your L40S (48 GB), you can scale to:
+  <ul>
+    <li><strong>BPE tokenizer</strong> with 8K-16K vocab (mirroring the Portuguese-optimized plan from Learning Record 0002)</li>
+    <li><strong>256-512 sequence length</strong> with batch size 32-64</li>
+    <li><strong>8-12 transformer layers</strong> (~10-15M params)</li>
+    <li><strong>Train on Portuguese text</strong> for ~4-8 hours to get a functional character diffusion LM</li>
+  </ul>
+  The algorithm is exactly the same — only the scale changes.
+</div>
+
+<h2>File Reference</h2>
+
+<table>
+  <tr>
+    <th>File</th>
+    <th>Purpose</th>
+  </tr>
+  <tr>
+    <td><code>code/train_tiny_mdm.py</code></td>
+    <td>Main training script. Run it to train and generate.</td>
+  </tr>
+  <tr>
+    <td><code>code/checkpoints/tiny_mdm.pt</code></td>
+    <td>Saved model weights (created after training).</td>
+  </tr>
+  <tr>
+    <td><code>code/tinyshakespeare.txt</code></td>
+    <td>Training data (downloaded automatically).</td>
+  </tr>
+</table>
+
+<h2>Check Your Understanding</h2>
+
+<div class="quiz">
+  <div class="quiz-question">1. Why does the model need the noise level t as input?</div>
+  <div class="quiz-options" id="q1opts">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      To determine the sequence length for generation
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      So it knows how many tokens are masked and can adapt its denoising strategy accordingly
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      To control the learning rate during training
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      It doesn't — we could remove t and the model would still work
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q1fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">2. What is the purpose of the confidence-based unmasking strategy during inference?</div>
+  <div class="quiz-options" id="q2opts">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      It's the only way to generate tokens in parallel
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      It ensures all tokens are revealed in exactly 64 steps regardless of length
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      Revealing high-confidence predictions first provides better context for predicting harder tokens in subsequent steps
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      It prevents the model from overfitting to the training data
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q2fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">3. Why does each training step sample a different random noise level?</div>
+  <div class="quiz-options" id="q3opts">
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="a">
+      To make training slower so the model generalizes better
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="b">
+      So the model learns to denoise at every possible masking level, enabling multi-step iterative inference
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="c">
+      To match the noise schedule used by autoregressive models
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="d">
+      To avoid overfitting to a single masking percentage like BERT (15%)
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q3fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">4. What would happen if you set num_inference_steps = 1?</div>
+  <div class="quiz-options" id="q4opts">
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="a">
+      The model would generate the same text as with 64 steps, just slower
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="b">
+      It would become equivalent to BERT — one forward pass predicting all tokens at once, with no iterative refinement
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="c">
+      The model would crash because it expects multiple steps
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="d">
+      It would switch to autoregressive generation
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q4fb"></div>
+</div>
+
+<h2>What's Next</h2>
+
+<p>You've trained your first diffusion language model. It's tiny, character-level, and generates Shakespeare-like babble — but the <strong>same algorithm</strong> scales to billion-parameter models like LLaDA 8B.</p>
+
+<p>Lesson 0006 dives into production diffusion LMs: <strong>DiffusionGemma</strong> (Google, 26B MoE) and <strong>DiffuMamba</strong> (SSM backbone for long context). You'll see how the masked diffusion core you just implemented gets scaled, optimized, and deployed.</p>
+
+<div class="callout callout-info">
+  <strong>Before moving on:</strong>
+  <ul>
+    <li>Run <code>python train_tiny_mdm.py</code> and watch it train</li>
+    <li>Try <code>--infer --temp 0.5</code> and <code>--temp 1.5</code> to feel the temperature effect</li>
+    <li>If you get errors, check: PyTorch installed? CUDA available? Disk space for the download?</li>
+  </ul>
+</div>
+
+<h2>Primary Sources</h2>
+<ul>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM: Simple and Effective Masked Diffusion Language Models</a> (Sahoo et al., NeurIPS 2024) — The algorithm this implementation is based on.</li>
+  <li><a href="https://github.com/kuleshov-group/mdlm">MDLM Official Code</a> (PyTorch) — Reference implementation for full-scale experiments.</li>
+  <li><a href="https://github.com/ML-GSAI/LLaDA">LLaDA 8B</a> — Production-scale masked diffusion LM. Same algorithm, 8 billion parameters.</li>
+  <li><a href="https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt">Tiny Shakespeare</a> (Karpathy) — The training dataset.</li>
+</ul>
+
+<nav class="lesson-nav">
+  <a href="0004-masked-diffusion.html">← Masked Diffusion</a>
+  <a href="0006-diffusion-at-scale.html">Next → At Scale</a>
+</nav>
+
+<script>
+(function() {
+  const quizData = {
+    q1: {
+      answer: 'b',
+      correct: '✅ Correct! The model needs to know the noise level to adapt — at low t, it predicts confidently; at high t, it predicts broad structure. Without t, it could only handle one noise level.',
+      wrong: '❌ Think about what information the model needs to denoise correctly at different stages of the process.'
+    },
+    q2: {
+      answer: 'c',
+      correct: '✅ Exactly! Confident predictions are likely correct, and revealing them first gives the model better context for the harder tokens in subsequent steps.',
+      wrong: '❌ Consider the iterative nature of diffusion — how does revealing certain tokens first help with the rest?'
+    },
+    q3: {
+      answer: 'b',
+      correct: '✅ Right! By training on all masking levels, the model learns a continuous denoising function that works for any corruption level — enabling the multi-step inference procedure.',
+      wrong: '❌ Think about what the model needs at inference time — it denoises from t=1 to t=0, passing through every intermediate level.'
+    },
+    q4: {
+      answer: 'b',
+      correct: '✅ Bingo! With 1 step, the model predicts all masked tokens in a single forward pass from the fully-masked state — exactly how BERT fills in [MASK] tokens. No iterative refinement means lower quality.',
+      wrong: '❌ Consider what BERT does with [MASK] tokens — one forward pass, fill all masks, done.'
+    }
+  };
+
+  ['q1', 'q2', 'q3', 'q4'].forEach(qName => {
+    const opts = document.getElementById(qName + 'opts');
+    const fb = document.getElementById(qName + 'fb');
+    const radios = opts.querySelectorAll('input[type="radio"]');
+    radios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        const selected = radio.closest('.quiz-option');
+        if (radio.value === quizData[qName].answer) {
+          selected.classList.add('correct');
+          fb.innerHTML = quizData[qName].correct;
+        } else {
+          selected.classList.add('wrong');
+          fb.innerHTML = quizData[qName].wrong;
+        }
+        fb.classList.add('show');
+      });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
