@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0004: Masked Diffusion — The Practical Starting Point</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  /* Masking visualization */
+  .mask-vis {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--blockquote-bg);
+  }
+  .mask-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+  }
+  .mask-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    min-width: 4.5rem;
+    color: var(--text-secondary);
+  }
+  .mtoken {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3rem 0.45rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    min-width: 1.6rem;
+    transition: all 0.3s ease;
+  }
+  .mtoken.visible {
+    background: var(--code-bg);
+    border-color: var(--border);
+    opacity: 0.55;
+  }
+  .mtoken.masked {
+    background: #1e3a5f;
+    color: #93c5fd;
+    border-color: #3b82f6;
+    font-weight: 700;
+  }
+  .mtoken.revealed {
+    background: #f0fdf4;
+    color: #166534;
+    border-color: #86efac;
+    font-weight: 600;
+  }
+  .mtoken.predicted {
+    background: #fffbeb;
+    color: #92400e;
+    border-color: #fbbf24;
+    font-weight: 600;
+  }
+  .mtoken.wrong {
+    background: #fef2f2;
+    color: #991b1b;
+    border-color: #fca5a5;
+    font-weight: 600;
+  }
+  @media (prefers-color-scheme: dark) {
+    .mtoken.masked { background: #0f2740; color: #93c5fd; }
+    .mtoken.revealed { background: #14532d; color: #bbf7d0; border-color: #22c55e; }
+    .mtoken.predicted { background: #451a03; color: #fde68a; border-color: #d97706; }
+    .mtoken.wrong { background: #450a0a; color: #fca5a5; border-color: #ef4444; }
+  }
+
+  .mask-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin: 0.5rem 0;
+  }
+  .mask-controls label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+  }
+  .mask-controls input[type="range"] {
+    width: 120px;
+  }
+  .mask-controls button {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  .mask-controls button:hover { background: var(--code-bg); }
+  .mask-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Schedule comparison */
+  .schedule-plot {
+    width: 100%;
+    max-width: 500px;
+    height: 200px;
+    margin: 1rem auto;
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    .schedule-plot { background: #111; }
+  }
+  .schedule-controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+  .schedule-controls button {
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.82rem;
+  }
+  .schedule-controls button:hover { background: var(--code-bg); }
+  .schedule-controls button.active-sched {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* Step-by-step denoising */
+  .denoise-container {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--blockquote-bg);
+  }
+  .denoise-step {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .denoise-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    min-width: 5rem;
+    color: var(--text-secondary);
+    text-align: right;
+  }
+  .confidence-bar {
+    height: 20px;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+    min-width: 2px;
+  }
+  .confidence-bar.high { background: var(--success); }
+  .confidence-bar.med { background: var(--warning); }
+  .confidence-bar.low { background: var(--accent); }
+
+  /* Algorithm card */
+  .algo-card {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1.5rem 0;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+  .algo-card .comment {
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  /* Step indicator */
+  .step-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* Comparison table extras */
+  .approach-best {
+    background: rgba(22, 163, 74, 0.08);
+  }
+
+  /* Pseudo-code compact */
+  .code-compact {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: var(--code-bg);
+    padding: 0.8rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Lesson 0004: Masked Diffusion — The Practical Starting Point</h1>
+  <p class="lesson-meta">Estimated time: 30 min · Prerequisites: Lesson 0003 (Core Mechanics)</p>
+  <nav class="lesson-nav">
+    <a href="0003-core-mechanics.html">← Core Mechanics</a>
+    <a href="0005-train-tiny-diffusion-lm.html">Next → Hands-On Training</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — Masked diffusion is the simplest practical diffusion algorithm for text. The forward process gradually replaces tokens with a <code>[MASK]</code> token. The reverse process learns to predict the original tokens from the masked sequence. Training uses standard cross-entropy loss (like BERT), and inference starts from all-masked and iteratively unmasks tokens. It's the approach behind LLaDA (8B) and MDLM — and the one you'll train in Lesson 0005.
+</blockquote>
+
+<h2>From Three Families to One</h2>
+
+<p>Lesson 0003 introduced the three solution families for discrete diffusion:</p>
+
+<ol>
+  <li><strong>Continuous embedding space</strong> (Diffusion-LM) — diffuses in ℝ<sup>d</sup>, rounds to tokens</li>
+  <li><strong>Discrete token transitions</strong> (D3PM/SEDD) — diffuses over token categories with transition matrices</li>
+  <li><strong>Masked diffusion</strong> (MDLM/LLaDA) — masks tokens, predicts original</li>
+</ol>
+
+<p>Masked diffusion wins on simplicity. Here's why:</p>
+
+<table>
+  <tr>
+    <th>Criterion</th>
+    <th>Continuous Embedding</th>
+    <th>Discrete Transitions</th>
+    <th>Masked Diffusion</th>
+  </tr>
+  <tr>
+    <td>Loss function</td>
+    <td>MSE in embedding space + rounding</td>
+    <td>Score entropy / ELBO</td>
+    <td class="approach-best"><strong>Cross-entropy</strong> (standard)</td>
+  </tr>
+  <tr>
+    <td>Forward process</td>
+    <td>Add Gaussian noise</td>
+    <td>Transition matrix (categorical)</td>
+    <td class="approach-best"><strong>Replace with [MASK]</strong></td>
+  </tr>
+  <tr>
+    <td>Code complexity</td>
+    <td>~200 lines for training loop</td>
+    <td>~300 lines (transition matrix math)</td>
+    <td class="approach-best"><strong>~50 lines on top of a transformer</strong></td>
+  </tr>
+  <tr>
+    <td>Single GPU feasible?</td>
+    <td>Yes (small scale)</td>
+    <td>Yes (small scale)</td>
+    <td class="approach-best"><strong>Yes (up to 1B params)</strong></td>
+  </tr>
+  <tr>
+    <td>Production models exist</td>
+    <td>Diffusion-LM (small)</td>
+    <td>SEDD (small)</td>
+    <td class="approach-best"><strong>LLaDA 8B, MDLM 1.1B</strong></td>
+  </tr>
+</table>
+
+<div class="callout callout-success">
+  <strong>Bottom line:</strong> Masked diffusion is to discrete diffusion what GPT-2 was to AR transformers — not necessarily the best on paper, but the one that actually works well enough to build and ship. Your 8 GB GPU can train a masked diffusion model. Your L40S can run LLaDA 8B.
+</div>
+
+<h2>The Forward Process: Gradual Masking</h2>
+
+<p>The forward (corruption) process for masked diffusion is almost trivial:</p>
+
+<ol>
+  <li>Start with a clean sequence of tokens</li>
+  <li>At each timestep <code>t</code>, replace a fraction <code>α(t)</code> of tokens with the special <code>[MASK]</code> token</li>
+  <li>At <code>t = 0</code>, zero tokens are masked (clean sequence)</li>
+  <li>At <code>t = T</code> (final timestep), all tokens are masked</li>
+</ol>
+
+<p>The fraction <code>α(t)</code> is called the <strong>masking schedule</strong>. It determines <em>how many</em> tokens are masked at each step. Unlike Gaussian diffusion (where noise accumulates), masked diffusion is <strong>monotonic</strong> — once a token is masked, it stays masked through the forward process.</p>
+
+<h3>Interactive: Watch the Forward Process</h3>
+
+<p>Drag the slider to see how tokens get progressively masked. The sentence is: <em>"O rato roeu a roupa do rei de Roma."</em></p>
+
+<div class="mask-vis">
+  <div class="mask-controls">
+    <label>Timestep t: <span id="forwardStepLabel">0</span> / <span id="forwardMaxLabel">10</span></label>
+    <input type="range" id="forwardSlider" min="0" max="10" value="0" style="flex:1;max-width:300px;">
+    <button id="forwardPlayBtn">▶ Play</button>
+  </div>
+  <div class="mask-row">
+    <span class="mask-label">Forward:</span>
+    <div id="forwardTokens" style="display:flex;flex-wrap:wrap;gap:0.35rem;"></div>
+  </div>
+  <div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;">
+    <span id="forwardStats">0 / 0 tokens masked (0%)</span>
+  </div>
+</div>
+
+<h3>Masking Schedules</h3>
+
+<p>The masking schedule dramatically affects training quality. Three common schedules:</p>
+
+<table>
+  <tr>
+    <th>Schedule</th>
+    <th>Formula α(t)</th>
+    <th>Behavior</th>
+    <th>Used By</th>
+  </tr>
+  <tr>
+    <td><strong>Uniform</strong></td>
+    <td>t / T</td>
+    <td>Linear increase — masks same fraction each step</td>
+    <td>Simple baselines</td>
+  </tr>
+  <tr>
+    <td><strong>Cosine</strong></td>
+    <td>1 − cos(π·t / 2T)</td>
+    <td>Slow start, fast middle, slow end — masks aggressively in middle steps</td>
+    <td>MDLM, LLaDA</td>
+  </tr>
+  <tr>
+    <td><strong>γ (gamma)</strong></td>
+    <td>1 − (1 − 1/T)<sup>γ·t</sup></td>
+    <td>Adjustable curvature — γ > 1 masks faster early</td>
+    <td>D3PM absorbing</td>
+  </tr>
+</table>
+
+<p>Interactively compare them below. Notice how <strong>cosine scheduling</strong> concentrates masking in the middle steps — this forces the model to learn useful predictions across a wide range of corruption levels.</p>
+
+<div class="schedule-controls" id="schedControls">
+  <button data-sched="cosine" class="active-sched">Cosine</button>
+  <button data-sched="uniform">Uniform (linear)</button>
+  <button data-sched="gamma1">γ = 2.0</button>
+  <button data-sched="gamma2">γ = 0.5</button>
+</div>
+<canvas id="scheduleCanvas" class="schedule-plot"></canvas>
+<p style="font-size:0.8rem;color:var(--text-secondary);text-align:center;">
+  X-axis: diffusion timestep · Y-axis: fraction of tokens masked
+</p>
+
+<div class="callout callout-info">
+  <strong>Why the schedule matters:</strong> If you mask too slowly at the beginning, most training steps see nearly clean data and the model doesn't learn to denoise. If you mask too quickly, most steps are nearly all-masked and the model doesn't learn structure. Cosine schedule balances this — the model sees a wide diversity of corruption levels during training.
+</div>
+
+<h2>The Reverse Process: Iterative Unmasking</h2>
+
+<p>The reverse (denoising) process is where the magic happens. Starting from a completely masked sequence, the model iteratively predicts and reveals tokens:</p>
+
+<ol>
+  <li>Start with <code>[MASK, MASK, MASK, ..., MASK]</code></li>
+  <li>At each step, the model predicts the original token for <em>every</em> position</li>
+  <li>The model also produces a <strong>confidence score</strong> for each prediction</li>
+  <li>Unmask the <code>k</code> highest-confidence positions (where <code>k</code> depends on the schedule)</li>
+  <li>Repeat until all tokens are revealed or confidence threshold is met</li>
+</ol>
+
+<p>This is fundamentally different from AR generation. Every token prediction is <strong>bidirectional</strong> — the model sees both left and right context (even if some of that context is still masked). And all predictions happen simultaneously per step.</p>
+
+<div class="highlight-box" style="border:2px solid var(--accent);border-radius:8px;padding:1rem;margin:1.5rem 0;background:var(--blockquote-bg);">
+  <strong>The trick that makes it work:</strong> The model is trained to predict the original token at <em>any</em> masking level. So when the model sees a sequence that is 70% masked, it can still make high-confidence predictions for the 30% visible tokens. Those high-confidence predictions get revealed first, providing more context for the next round.
+</div>
+
+<h3>Interactive: Watch the Reverse Process</h3>
+
+<p>Watch the model iteratively unmask tokens from a completely masked start. Each step reveals the most confident predictions first. Hover over revealed tokens to see their confidence.</p>
+
+<div class="denoise-container">
+  <div class="mask-controls">
+    <label>Steps: <select id="denoiseSteps">
+      <option value="4">4</option>
+      <option value="8" selected>8</option>
+      <option value="16">16</option>
+      <option value="32">32</option>
+    </select></label>
+    <label>Speed: <select id="denoiseSpeed">
+      <option value="600">Slow</option>
+      <option value="300" selected>Normal</option>
+      <option value="100">Fast</option>
+    </select></label>
+    <button id="denoiseBtn" class="button">▶ Run Denoising</button>
+  </div>
+  <div class="mask-row">
+    <span class="mask-label">t=0 (noise):</span>
+    <div id="denoiseOutput" style="display:flex;flex-wrap:wrap;gap:0.35rem;"></div>
+  </div>
+  <div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;min-height:1.2rem;" id="denoiseStatus">
+    Press "Run Denoising" to start
+  </div>
+</div>
+
+<h2>The Training Objective (It's Just Cross-Entropy)</h2>
+
+<p>Here's the practical beauty of masked diffusion — the training objective is cross-entropy loss on the masked positions, exactly like BERT's masked language modeling:</p>
+
+<div class="code-compact"># Masked diffusion training — one batch
+tokens      = [O, rato, roeu, a, roupa, do, rei, de, Roma, .]   # shape: [B, L]
+noise_level = sample_uniform(0, 1)                                 # per sample in batch
+mask        = bernoulli(noise_level)                               # which tokens to mask
+masked      = where(mask, [MASK], tokens)                          # replace selected with [MASK]
+logits      = model(masked)                                        # forward pass → [B, L, V]
+loss        = cross_entropy(logits[mask], tokens[mask])            # loss on masked positions only
+loss.backward()</div>
+
+<p>That's it. No score matching. No ELBO. No transition matrices. Standard cross-entropy, same as any classifier or AR language model. The only difference: you only compute the loss on <strong>masked positions</strong>.</p>
+
+<div class="callout callout-warning">
+  <strong>But isn't this just BERT?</strong> Good question. BERT is also trained with masked language modeling — but BERT is <em>not</em> a diffusion model. The difference is the <strong>inference procedure</strong>:
+  <ul>
+    <li>BERT: single forward pass, predicts all masked tokens at once, done.</li>
+    <li>Masked diffusion: <em>iterative</em> — multiple passes, each revealing a subset of tokens, using the newly revealed tokens as context for the next round.</li>
+  </ul>
+  Think of it this way: BERT is one-step denoising. Masked diffusion is multi-step denoising. The training is the same; the inference is fundamentally different.
+</div>
+
+<h2>Full Training and Inference Algorithm</h2>
+
+<div class="algo-card">
+<span class="comment"># === TRAINING ===</span><br>
+<span class="comment"># θ: model parameters (transformer with bidirectional attention)</span><br>
+<span class="comment"># D: dataset of tokenized text sequences</span><br>
+<br>
+<b>for</b> each batch (x, lengths) <b>in</b> D:<br>
+&nbsp;&nbsp;t = uniform(0, 1)                               <span class="comment"># sample noise level</span><br>
+&nbsp;&nbsp;α = schedule(t)                                <span class="comment"># fraction to mask (cosine schedule)</span><br>
+&nbsp;&nbsp;mask = bernoulli(α, shape=x.shape)              <span class="comment"># which positions to mask</span><br>
+&nbsp;&nbsp;x_masked = where(mask, [MASK], x)               <span class="comment"># apply masking</span><br>
+&nbsp;&nbsp;logits = model(x_masked)                       <span class="comment"># [B, L, V] forward pass</span><br>
+&nbsp;&nbsp;loss = cross_entropy(logits[mask], x[mask])     <span class="comment"># loss on masked positions</span><br>
+&nbsp;&nbsp;loss.backward()                                <span class="comment"># gradient step</span><br>
+<br>
+<span class="comment"># === INFERENCE (GENERATION) ===</span><br>
+<span class="comment"># L: target sequence length (must be known in advance)</span><br>
+<span class="comment"># N_steps: number of denoising steps (e.g., 64 for quality, 4 for speed)</span><br>
+<br>
+x = [MASK] * L                                      <span class="comment"># start fully masked</span><br>
+<b>for</b> step = N_steps <b>down to</b> 1:<br>
+&nbsp;&nbsp;α_now = schedule(step / N_steps)               <span class="comment"># current masking level</span><br>
+&nbsp;&nbsp;α_next = schedule((step - 1) / N_steps)        <span class="comment"># next (less masked) level</span><br>
+&nbsp;&nbsp;logits = model(x)                            <span class="comment"># forward pass</span><br>
+&nbsp;&nbsp;probs = softmax(logits, dim=-1)               <span class="comment"># [B, L, V] token probabilities</span><br>
+&nbsp;&nbsp;confidences = max(probs, dim=-1)              <span class="comment"># [B, L] how confident per position</span><br>
+&nbsp;&nbsp;n_unmask = ceil((α_now - α_next) * L)          <span class="comment"># how many to reveal this step</span><br>
+&nbsp;&nbsp;masked_positions = where(x == [MASK])          <span class="comment"># still-masked indices</span><br>
+&nbsp;&nbsp;reveal_idx = topk(confidences[masked], n_unmask) <span class="comment"># highest-confidence masked positions</span><br>
+&nbsp;&nbsp;x[reveal_idx] = argmax(probs[reveal_idx])      <span class="comment"># set to most likely token</span><br>
+<br>
+<span class="comment"># x now contains the generated sequence</span>
+</div>
+
+<h3>Key Design Choices</h3>
+
+<table>
+  <tr>
+    <th>Decision</th>
+    <th>Options</th>
+    <th>Default (MDLM/LLaDA)</th>
+  </tr>
+  <tr>
+    <td>Masking schedule</td>
+    <td>uniform, cosine, γ</td>
+    <td><strong>Cosine</strong> — best empirical results</td>
+  </tr>
+  <tr>
+    <td>Token prediction</td>
+    <td>argmax, temperature sampling, top-k</td>
+    <td><strong>Temperature sampling</strong> (T=0.7–1.0) for diversity</td>
+  </tr>
+  <tr>
+    <td>Confidence metric</td>
+    <td>max prob, entropy, learned confidence</td>
+    <td><strong>Max softmax probability</strong> — simple and effective</td>
+  </tr>
+  <tr>
+    <td>Number of steps</td>
+    <td>4–1024</td>
+    <td><strong>64–256</strong> for quality, <strong>4–8</strong> for speed</td>
+  </tr>
+  <tr>
+    <td>Unmasking strategy</td>
+    <td>one-by-one, block, confidence-threshold</td>
+    <td><strong>Confidence-threshold block</strong> — reveal top-k per step</td>
+  </tr>
+</table>
+
+<h2>Interactive: Masking Schedule Explorer</h2>
+
+<p>See how different schedules translate into different numbers of tokens revealed per step during inference. The schedule determines the <em>revelation cadence</em> — which tokens get revealed when.</p>
+
+<div class="mask-vis">
+  <div class="mask-controls">
+    <label>Schedule:
+      <select id="revelationSched">
+        <option value="cosine">Cosine</option>
+        <option value="uniform">Uniform</option>
+        <option value="gamma2">γ = 2.0 (front-loaded)</option>
+      </select>
+    </label>
+    <label>Sequence length: <span id="revealLenLabel">16</span></label>
+    <input type="range" id="revealLenSlider" min="8" max="64" value="16" style="width:120px;">
+    <button id="revealPlayBtn" class="button">▶ Play Reveal</button>
+  </div>
+  <div class="mask-row" style="justify-content:center;min-height:2.5rem;">
+    <div id="revealTokens" style="display:flex;flex-wrap:wrap;gap:0.3rem;justify-content:center;"></div>
+  </div>
+  <div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;min-height:1.2rem;" id="revealStatus">
+    Press "Play Reveal" to watch the schedule in action
+  </div>
+</div>
+
+<h2>Why Masked Diffusion is Your Practical Starting Point</h2>
+
+<p>Three concrete reasons this is the right algorithm to implement first:</p>
+
+<h3>1. Minimal Code on Top of a Transformer</h3>
+<p>If you already have a bidirectional transformer (or can borrow one from Hugging Face), adding masked diffusion is <strong>~50 lines of Python</strong>. The forward pass is the same. You just change the loss computation and inference loop.</p>
+
+<div class="callout callout-success">
+  <strong>Your L40S reality check:</strong> At 48 GB VRAM, you can train a masked diffusion model with ~350M parameters (similar to GPT-2 medium) on sequences of 512 tokens with batch size 16-32. The cosine masking schedule adds negligible overhead — the cost is dominated by the transformer forward pass, same as any LM.
+</div>
+
+<h3>2. Pre-Trained Models You Can Run Today</h3>
+<p>LLaDA 8B fits on your L40S with 4-bit quantization. It generates text via masked diffusion natively. You can experiment with its behavior before building your own:</p>
+
+<ul>
+  <li><strong>LLaDA 8B</strong> (ML-GSAI, 2025) — quantized to 4-bit: ~5 GB VRAM. Runs on L40S with room for batch size 4-8.</li>
+  <li><strong>MDLM base</strong> (Sahoo et al., 2024) — 360M params. Trains on a single 24 GB GPU. Your 8 GB can handle a smaller version.</li>
+  <li><strong>SMDM</strong> (ML-GSAI, 2024) — 1.1B params, shows MDMs match ARMs with 1.4× faster sampling.</li>
+</ul>
+
+<h3>3. Clear Upgrade Path</h3>
+<p>Starting with masked diffusion doesn't lock you in. The skills transfer:</p>
+
+<ul>
+  <li>→ <strong>More steps</strong>: increase N_steps for quality, decrease for speed</li>
+  <li>→ <strong>Block-autoregressive</strong>: combine with AR for variable-length output (DiffusionGemma approach)</li>
+  <li>→ <strong>SSM backbone</strong>: swap the transformer for Mamba for long-context efficiency (DiffuMamba)</li>
+  <li>→ <strong>Discrete transitions</strong>: graduate to SEDD if you want state-of-the-art perplexity</li>
+</ul>
+
+<h2>Training Cost: Masked Diffusion vs AR</h2>
+
+<p>A critical table for your hardware planning:</p>
+
+<table>
+  <tr>
+    <th>Factor</th>
+    <th>Autoregressive (GPT-2 style)</th>
+    <th>Masked Diffusion</th>
+  </tr>
+  <tr>
+    <td>Loss computation</td>
+    <td>Cross-entropy on <em>all</em> positions</td>
+    <td>Cross-entropy on <em>masked</em> positions only</td>
+  </tr>
+  <tr>
+    <td>Loss efficiency</td>
+    <td>N tokens contribute to loss per sample</td>
+    <td>~α·N tokens on average (α is masking fraction)</td>
+  </tr>
+  <tr>
+    <td>Forward pass per step</td>
+    <td>Full sequence (causal mask)</td>
+    <td>Full sequence (bidirectional attn)</td>
+  </tr>
+  <tr>
+    <td>Forward passes per training step</td>
+    <td>1 (teacher forcing)</td>
+    <td>1 (single corruption level per sample)</td>
+  </tr>
+  <tr>
+    <td>Total training FLOPs (equal tokens)</td>
+    <td>Baseline</td>
+    <td>~1× (same transformer size, same tokens)</td>
+  </tr>
+  <tr>
+    <td>Training-to-inference mismatch</td>
+    <td>Large (parallel train, serial infer)</td>
+    <td><strong>None</strong> (same procedure for both)</td>
+  </tr>
+  <tr>
+    <td>Inference FLOPs (2048 tokens)</td>
+    <td>O(L²) with KV-cache</td>
+    <td>O(N_steps × L²) with full attention</td>
+  </tr>
+</table>
+
+<div class="callout callout-warning">
+  <strong>Wait — training is the same cost?</strong> Yes, per training step. But masked diffusion needs <em>more training steps</em> to converge because each step only provides a learning signal on the masked subset. MDLM (Sahoo et al.) found masked diffusion needs roughly <strong>2× the training tokens</strong> of a comparable AR model to match perplexity. For your L40S, this means a 2-day AR training job becomes a 4-day diffusion job. The tradeoff is inference flexibility.
+</div>
+
+<h2>Going Deeper: The MDLM Derivation (Light)</h2>
+
+<p>The MDLM paper (<a href="https://arxiv.org/abs/2406.07524">Sahoo et al., NeurIPS 2024</a>) provides a clean theoretical justification: masked diffusion can be derived as a mixture of <strong>masked language modeling losses</strong> over all possible masking levels. The training objective becomes:</p>
+
+<div class="code-compact">L = E_{t ~ U(0,1)} [ λ(t) · E_{mask ~ α(t)} [ CE(logits, target) ] ]</div>
+
+<p>Where λ(t) is a <strong>weighting function</strong> that prioritizes certain noise levels. The key insight: instead of choosing a single masking level like BERT (typically 15%), MDLM trains on <em>all</em> masking levels simultaneously. The weighting function λ(t) determines which masking levels matter most.</p>
+
+<ul>
+  <li><strong>Uniform weighting (λ=1)</strong>: standard approach, treats all noise levels equally</li>
+  <li><strong>ELBO weighting</strong>: weights by the variance of the corruption distribution — theoretically optimal</li>
+  <li><strong>λ(t) = 1/(1−α(t))</strong>: used by MDLM, gives more weight to lower-noise (easier) steps</li>
+</ul>
+
+<p>For your implementation, start with uniform weighting. It works fine and removes one hyperparameter.</p>
+
+<h2>Check Your Understanding</h2>
+
+<div class="quiz">
+  <div class="quiz-question">1. What is the forward (corruption) process in masked diffusion?</div>
+  <div class="quiz-options" id="q1opts">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      Adding Gaussian noise to token embeddings
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      Randomly permuting token positions
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      Gradually replacing tokens with a special [MASK] token according to a schedule
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      Applying a transition matrix to token probabilities
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q1fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">2. How does masked diffusion inference differ from BERT inference?</div>
+  <div class="quiz-options" id="q2opts">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      It doesn't — they use the same inference procedure
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      BERT uses a single forward pass; masked diffusion uses multiple iterative passes, progressively revealing tokens
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      BERT generates tokens left-to-right; masked diffusion generates them right-to-left
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      BERT requires a prompt; masked diffusion generates from nothing
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q2fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">3. What makes cosine masking better than uniform masking?</div>
+  <div class="quiz-options" id="q3opts">
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="a">
+      It masks tokens faster, reducing training time
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="b">
+      It concentrates masking in the middle steps, exposing the model to a wider diversity of corruption levels
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="c">
+      Cosine is mathematically guaranteed to converge to the optimal solution
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="d">
+      There is no difference — they produce identical results
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q3fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">4. Why is masked diffusion called the "practical starting point"? (Select all that apply)</div>
+  <div class="quiz-options" id="q4opts">
+    <label class="quiz-option">
+      <input type="checkbox" name="q4" value="a">
+      Uses standard cross-entropy loss, no complex math
+    </label>
+    <label class="quiz-option">
+      <input type="checkbox" name="q4" value="b">
+      Runs on single GPUs (8-48 GB VRAM)
+    </label>
+    <label class="quiz-option">
+      <input type="checkbox" name="q4" value="c">
+      Highest quality of all diffusion approaches for text
+    </label>
+    <label class="quiz-option">
+      <input type="checkbox" name="q4" value="d">
+      Code is ~50 lines on top of a transformer
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q4fb"></div>
+</div>
+
+<h2>What's Next</h2>
+
+<p>You now understand the masked diffusion algorithm — the one you'll actually implement. Lesson 0005 is the hands-on session: <strong>train a tiny diffusion language model on your GPU</strong>. We'll use a character-level tokenizer, a small transformer, and the exact training loop described above.</p>
+
+<div class="callout callout-info">
+  <strong>Prep for Lesson 0005:</strong>
+  <ul>
+    <li>Make sure PyTorch is installed: <code>pip install torch</code></li>
+    <li>You'll need ~2 GB free VRAM — any GPU works</li>
+    <li>We'll use <code>tiny Shakespeare</code> as our dataset (~1 MB, included in our setup)</li>
+    <li>Total training time: ~5-10 minutes on a modern GPU</li>
+  </ul>
+</div>
+
+<h2>Primary Sources</h2>
+<ul>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM: Simple and Effective Masked Diffusion Language Models</a> (Sahoo et al., NeurIPS 2024) — The paper that made masked diffusion practical. Read the Method section.</li>
+  <li><a href="https://arxiv.org/abs/2410.18514">SMDM: Scaling up Masked Diffusion Models on Text</a> (ML-GSAI, 2024) — Scaling laws showing MDMs match ARMs with 1.4× faster sampling.</li>
+  <li><a href="https://github.com/ML-GSAI/LLaDA">LLaDA 8B</a> (ML-GSAI, 2025) — The largest open masked diffusion LM. Run it on your L40S today.</li>
+  <li><a href="https://arxiv.org/abs/2107.03006">D3PM: Structured Denoising Diffusion Models in Discrete State-Spaces</a> (Austin et al., 2021) — Foundational paper; the absorbing (masking) state is the D3PM formulation of masked diffusion.</li>
+  <li><a href="https://s-sahoo.com/mdlm">MDLM Project Page</a> — Blog post + video walkthrough by the authors.</li>
+</ul>
+
+<nav class="lesson-nav">
+  <a href="0003-core-mechanics.html">← Core Mechanics</a>
+  <a href="0005-train-tiny-diffusion-lm.html">Next → Hands-On Training</a>
+</nav>
+
+<script>
+(function() {
+  // ─── Forward Masking Visualization ───
+  const SENTENCE = ['O', 'rato', 'roeu', 'a', 'roupa', 'do', 'rei', 'de', 'Roma', '.'];
+  const N_STEPS = 10;
+  const forwardSlider = document.getElementById('forwardSlider');
+  const forwardStepLabel = document.getElementById('forwardStepLabel');
+  const forwardMaxLabel = document.getElementById('forwardMaxLabel');
+  const forwardTokens = document.getElementById('forwardTokens');
+  const forwardStats = document.getElementById('forwardStats');
+  const forwardPlayBtn = document.getElementById('forwardPlayBtn');
+
+  forwardMaxLabel.textContent = N_STEPS;
+  let forwardPlaying = false;
+  let forwardAnimId = null;
+
+  function cosineMask(t, T) {
+    return 1 - Math.cos((Math.PI / 2) * (t / T));
+  }
+
+  function renderForward(t) {
+    const frac = cosineMask(t, N_STEPS);
+    forwardTokens.innerHTML = '';
+    let masked = 0;
+    SENTENCE.forEach((word, i) => {
+      const threshold = (i + 0.5) / SENTENCE.length;
+      const isMasked = (i / SENTENCE.length) < frac;
+      const el = document.createElement('span');
+      el.className = 'mtoken' + (isMasked ? ' masked' : ' visible');
+      el.textContent = isMasked ? '[MASK]' : word;
+      forwardTokens.appendChild(el);
+      if (isMasked) masked++;
+    });
+    forwardStats.textContent = `${masked} / ${SENTENCE.length} tokens masked (${Math.round(frac * 100)}%)`;
+    forwardStepLabel.textContent = t;
+    forwardSlider.value = t;
+  }
+
+  forwardSlider.addEventListener('input', () => {
+    renderForward(parseInt(forwardSlider.value));
+  });
+
+  forwardPlayBtn.addEventListener('click', () => {
+    if (forwardPlaying) {
+      forwardPlaying = false;
+      if (forwardAnimId) clearInterval(forwardAnimId);
+      forwardPlayBtn.textContent = '▶ Play';
+      return;
+    }
+    forwardPlaying = true;
+    forwardPlayBtn.textContent = '⏹ Stop';
+    let t = 0;
+    renderForward(t);
+    forwardAnimId = setInterval(() => {
+      t++;
+      if (t > N_STEPS) {
+        clearInterval(forwardAnimId);
+        forwardPlaying = false;
+        forwardPlayBtn.textContent = '▶ Play';
+        return;
+      }
+      renderForward(t);
+    }, 600);
+  });
+
+  renderForward(0);
+
+  // ─── Schedule Canvas ───
+  const schedCanvas = document.getElementById('scheduleCanvas');
+  const ctx = schedCanvas.getContext('2d');
+
+  function resizeCanvas() {
+    const rect = schedCanvas.parentElement.getBoundingClientRect();
+    const w = Math.min(500, rect.width - 16);
+    schedCanvas.width = w * 2;
+    schedCanvas.height = 400;
+    schedCanvas.style.width = w + 'px';
+    schedCanvas.style.height = '200px';
+    drawSchedule('cosine');
+  }
+
+  function drawSchedule(type) {
+    const w = schedCanvas.width;
+    const h = schedCanvas.height;
+    const pad = 40;
+    const plotW = w - 2 * pad;
+    const plotH = h - 2 * pad;
+    const T = 100;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Background
+    ctx.fillStyle = getComputedStyle(schedCanvas).backgroundColor || '#fff';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#ddd';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + plotH - (i / 4) * plotH;
+      ctx.beginPath();
+      ctx.moveTo(pad, y);
+      ctx.lineTo(w - pad, y);
+      ctx.stroke();
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#444';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText((i * 25) + '%', pad - 5, y + 4);
+    }
+
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+
+    for (let t = 0; t <= T; t++) {
+      let alpha;
+      if (type === 'cosine') {
+        alpha = 1 - Math.cos((Math.PI / 2) * (t / T));
+      } else if (type === 'uniform') {
+        alpha = t / T;
+      } else if (type === 'gamma1') {
+        const gamma = 2.0;
+        alpha = 1 - Math.pow(1 - 1/T, gamma * t);
+      } else if (type === 'gamma2') {
+        const gamma = 0.5;
+        alpha = 1 - Math.pow(1 - 1/T, gamma * t);
+      }
+      const x = pad + (t / T) * plotW;
+      const y = pad + plotH - alpha * plotH;
+      if (t === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#444';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('timestep', w / 2, h - 4);
+
+    ctx.save();
+    ctx.translate(10, h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('masked fraction', 0, 0);
+    ctx.restore();
+  }
+
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  document.querySelectorAll('#schedControls button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#schedControls button').forEach(b => b.classList.remove('active-sched'));
+      btn.classList.add('active-sched');
+      drawSchedule(btn.dataset.sched);
+    });
+  });
+
+  // ─── Denoising Simulation ───
+  const DENOISE_SENT = ['O', 'gato', 'subiu', 'no', 'telhado', 'e', 'olhou', 'a', 'lua', '.'];
+  const denoiseOutput = document.getElementById('denoiseOutput');
+  const denoiseBtn = document.getElementById('denoiseBtn');
+  const denoiseStatus = document.getElementById('denoiseStatus');
+  const denoiseSteps = document.getElementById('denoiseSteps');
+  const denoiseSpeed = document.getElementById('denoiseSpeed');
+  let denoising = false;
+
+  // Pre-compute confidence schedule for each position
+  function getConfidence(pos, totalLen, step, totalSteps) {
+    // Simulates the model's confidence: earlier tokens in the sentence
+    // get revealed first (simulating higher confidence from more syntactic context)
+    const progress = step / totalSteps;
+    const posDifficulty = (pos / totalLen) * 0.6; // later positions are "harder"
+    const noise = Math.random() * 0.15;
+    const confidence = Math.min(1, Math.max(0.05, (progress - posDifficulty) / (1 - posDifficulty) + noise));
+    return Math.min(1, confidence);
+  }
+
+  async function runDenoising() {
+    if (denoising) return;
+    denoising = true;
+    denoiseBtn.disabled = true;
+    denoiseBtn.textContent = '⏳ Denoising...';
+
+    const steps = parseInt(denoiseSteps.value);
+    const delay = parseInt(denoiseSpeed.value);
+    const len = DENOISE_SENT.length;
+
+    // Initial state: all masked
+    let state = new Array(len).fill(null);
+    let revealed = new Array(len).fill(false);
+
+    function renderState(stepMsg) {
+      denoiseOutput.innerHTML = '';
+      for (let i = 0; i < len; i++) {
+        const el = document.createElement('span');
+        if (revealed[i]) {
+          el.className = 'mtoken revealed';
+          el.textContent = DENOISE_SENT[i];
+        } else {
+          el.className = 'mtoken masked';
+          el.textContent = '[MASK]';
+        }
+        denoiseOutput.appendChild(el);
+      }
+      if (stepMsg) denoiseStatus.textContent = stepMsg;
+    }
+
+    function delayFn(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    renderState('Starting: all tokens masked...');
+    await delayFn(500);
+
+    // Use cosine schedule to determine how many tokens to reveal per step
+    let lastAlpha = 1;
+    for (let step = 1; step <= steps; step++) {
+      const alphaNow = 1 - Math.cos((Math.PI / 2) * ((steps - step) / steps));
+      const nToReveal = Math.ceil((lastAlpha - alphaNow) * len);
+      lastAlpha = alphaNow;
+
+      // Find still-masked positions
+      const maskedIndices = [];
+      for (let i = 0; i < len; i++) {
+        if (!revealed[i]) maskedIndices.push(i);
+      }
+
+      if (maskedIndices.length === 0) break;
+
+      // Compute confidences for masked positions
+      const withConfidence = maskedIndices.map(idx => ({
+        idx,
+        conf: getConfidence(idx, len, step, steps)
+      }));
+
+      // Sort by confidence descending
+      withConfidence.sort((a, b) => b.conf - a.conf);
+
+      // Reveal top N
+      const toReveal = withConfidence.slice(0, Math.min(nToReveal, withConfidence.length));
+      toReveal.forEach(({ idx }) => { revealed[idx] = true; });
+
+      renderState(`Step ${step}/${steps}: ${toReveal.length} token(s) revealed`);
+      await delayFn(delay);
+    }
+
+    // Ensure all revealed
+    for (let i = 0; i < len; i++) revealed[i] = true;
+    renderState('✅ Generation complete — all tokens revealed');
+
+    denoising = false;
+    denoiseBtn.disabled = false;
+    denoiseBtn.textContent = '▶ Run Denoising';
+  }
+
+  denoiseBtn.addEventListener('click', runDenoising);
+
+  // Initial render
+  (function() {
+    for (let i = 0; i < DENOISE_SENT.length; i++) {
+      const el = document.createElement('span');
+      el.className = 'mtoken masked';
+      el.textContent = '[MASK]';
+      denoiseOutput.appendChild(el);
+    }
+  })();
+
+  // ─── Revelation Schedule Explorer ───
+  const revelationSched = document.getElementById('revelationSched');
+  const revealLenSlider = document.getElementById('revealLenSlider');
+  const revealLenLabel = document.getElementById('revealLenLabel');
+  const revealTokens = document.getElementById('revealTokens');
+  const revealStatus = document.getElementById('revealStatus');
+  const revealPlayBtn = document.getElementById('revealPlayBtn');
+  let revealPlaying = false;
+  let revealAnimId = null;
+
+  // Sample tokens for the visual
+  const SAMPLE_TOKENS = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua'.split(' ');
+
+  function getMaskSchedule(type, t, T) {
+    if (type === 'cosine') {
+      return 1 - Math.cos((Math.PI / 2) * (t / T));
+    } else if (type === 'uniform') {
+      return t / T;
+    } else if (type === 'gamma2') {
+      const gamma = 2.0;
+      return 1 - Math.pow(1 - 1/T, gamma * t);
+    }
+    return t / T;
+  }
+
+  function renderRevealStep(t, totalSteps, len, schedType) {
+    const alphaNow = getMaskSchedule(schedType, t, totalSteps);
+    const alphaPrev = t > 0 ? getMaskSchedule(schedType, t - 1, totalSteps) : 1;
+    const nMasked = Math.round(alphaNow * len);
+    const nPrevMasked = Math.round(alphaPrev * len);
+
+    revealTokens.innerHTML = '';
+    // Use predictable seed based on position so each rendering is consistent
+    for (let i = 0; i < len; i++) {
+      const el = document.createElement('span');
+      // Which tokens are revealed: the "easiest" (earliest) positions
+      const revealed = i < (len - nMasked);
+      if (revealed && t > 0) {
+        el.className = 'mtoken revealed';
+        el.textContent = SAMPLE_TOKENS[i % SAMPLE_TOKENS.length];
+      } else {
+        el.className = 'mtoken masked';
+        el.textContent = '[MASK]';
+      }
+      revealTokens.appendChild(el);
+    }
+  }
+
+  function playReveal() {
+    if (revealPlaying) {
+      revealPlaying = false;
+      if (revealAnimId) clearInterval(revealAnimId);
+      revealPlayBtn.textContent = '▶ Play Reveal';
+      return;
+    }
+
+    const schedType = revelationSched.value;
+    const len = parseInt(revealLenSlider.value);
+    const totalSteps = len; // one step per token max
+
+    revealPlaying = true;
+    revealPlayBtn.textContent = '⏹ Stop';
+    let t = 0;
+
+    // Show initial: all masked
+    renderRevealStep(0, totalSteps, len, schedType);
+    revealStatus.textContent = `Step 0/${totalSteps} — all masked`;
+
+    revealAnimId = setInterval(() => {
+      t++;
+      if (t > totalSteps) {
+        clearInterval(revealAnimId);
+        revealPlaying = false;
+        revealPlayBtn.textContent = '▶ Play Reveal';
+        const nRevealed = len - Math.round(getMaskSchedule(schedType, totalSteps, totalSteps) * len);
+        revealStatus.textContent = `✅ Complete — ${nRevealed}/${len} tokens revealed`;
+        return;
+      }
+      renderRevealStep(t, totalSteps, len, schedType);
+      const masked = Math.round(getMaskSchedule(schedType, t, totalSteps) * len);
+      if (t === totalSteps) {
+        revealStatus.textContent = `Step ${t}/${totalSteps} — ${len - masked} revealed, ${masked} masked`;
+      } else {
+        const newlyRevealed = Math.round(getMaskSchedule(schedType, t - 1, totalSteps) * len) - masked;
+        revealStatus.textContent = `Step ${t}/${totalSteps} — ${len - masked} revealed (+${newlyRevealed > 0 ? newlyRevealed : 0} this step), ${masked} masked`;
+      }
+    }, 300);
+  }
+
+  revealPlayBtn.addEventListener('click', playReveal);
+  revealLenSlider.addEventListener('input', () => {
+    revealLenLabel.textContent = revealLenSlider.value;
+    if (!revealPlaying) {
+      const sched = revelationSched.value;
+      const len = parseInt(revealLenSlider.value);
+      renderRevealStep(0, len, len, sched);
+      revealStatus.textContent = `Length: ${len} tokens — press Play to watch the schedule`;
+    }
+  });
+  revelationSched.addEventListener('change', () => {
+    if (!revealPlaying) {
+      const sched = revelationSched.value;
+      const len = parseInt(revealLenSlider.value);
+      renderRevealStep(0, len, len, sched);
+      revealStatus.textContent = `${sched} schedule — press Play to watch`;
+    }
+  });
+
+  // Initial reveal
+  (function() {
+    const len = parseInt(revealLenSlider.value);
+    renderRevealStep(0, len, len, 'cosine');
+  })();
+
+  // ─── Quiz Logic ───
+  const quizData = {
+    q1: {
+      answer: 'c',
+      correct: '✅ Correct! The forward process replaces tokens with [MASK] according to a schedule — simple and deterministic.',
+      wrong: '❌ Not quite. Hint: think about what "masking" means — we replace tokens with a special placeholder.'
+    },
+    q2: {
+      answer: 'b',
+      correct: '✅ Right! BERT does one pass and fills all masks; masked diffusion iterates, each step using newly revealed tokens as additional context.',
+      wrong: '❌ Consider how many forward passes each approach uses during inference.'
+    },
+    q3: {
+      answer: 'b',
+      correct: '✅ Exactly! Cosine masking concentrates corruption in the middle steps, exposing the model to a wider range of masking levels during training.',
+      wrong: '❌ Think about what property makes one schedule better than another in terms of training dynamics.'
+    },
+    q4: {
+      answer: ['a', 'b', 'd'],
+      correct: '✅ All except (c)! Masked diffusion is not the highest quality — SEDD often achieves better perplexity. But it\'s the most practical: simple loss, runs on single GPUs, and minimal code on top of a transformer.',
+      wrong: '❌ Three of these are correct. The incorrect one claims masked diffusion is the highest quality — it\'s actually the most practical, not the best on paper.'
+    }
+  };
+
+  // Single-select quizzes
+  ['q1', 'q2', 'q3'].forEach(qName => {
+    const opts = document.getElementById(qName + 'opts');
+    const fb = document.getElementById(qName + 'fb');
+    const radios = opts.querySelectorAll('input[type="radio"]');
+    radios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        const selected = radio.closest('.quiz-option');
+        if (radio.value === quizData[qName].answer) {
+          selected.classList.add('correct');
+          fb.innerHTML = quizData[qName].correct;
+        } else {
+          selected.classList.add('wrong');
+          fb.innerHTML = quizData[qName].wrong;
+        }
+        fb.classList.add('show');
+      });
+    });
+  });
+
+  // Multi-select quiz (q4)
+  (function() {
+    const opts = document.getElementById('q4opts');
+    const fb = document.getElementById('q4fb');
+    const checkboxes = opts.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', () => {
+        const selected = [];
+        checkboxes.forEach(c => {
+          if (c.checked) selected.push(c.value);
+        });
+        const correct = quizData.q4.answer;
+        const isCorrect = selected.length === correct.length && correct.every(v => selected.includes(v));
+
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        checkboxes.forEach(c => {
+          if (correct.includes(c.value) && c.checked) {
+            c.closest('.quiz-option').classList.add('correct');
+          } else if (c.checked) {
+            c.closest('.quiz-option').classList.add('wrong');
+          }
+        });
+
+        if (isCorrect) {
+          fb.innerHTML = quizData.q4.correct;
+        } else if (selected.length > 0) {
+          fb.innerHTML = quizData.q4.wrong;
+        } else {
+          fb.innerHTML = '';
+          fb.classList.remove('show');
+          return;
+        }
+        fb.classList.add('show');
+      });
+    });
+  })();
+
+})();
+</script>
+
+</body>
+</html>
