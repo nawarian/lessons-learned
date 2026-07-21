@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0002: Why Not Autoregressive?</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .comparison-visual {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .gen-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .gen-label {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    min-width: 5rem;
+    color: var(--text-secondary);
+  }
+  .token {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    min-width: 1.8rem;
+    transition: all 0.3s ease;
+  }
+  .token.active-ar {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    transform: scale(1.05);
+  }
+  .token.active-diff {
+    background: #16a34a;
+    color: #fff;
+    border-color: #16a34a;
+  }
+  .token.pending {
+    opacity: 0.3;
+  }
+  .token.done-ar {
+    background: var(--code-bg);
+  }
+  .token.done-diff {
+    background: #dcfce7;
+    border-color: #86efac;
+  }
+  @media (prefers-color-scheme: dark) {
+    .token.done-diff {
+      background: #14532d;
+      border-color: #22c55e;
+    }
+  }
+  .time-counter {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--code-bg);
+    border-radius: 6px;
+    display: inline-block;
+    margin-top: 0.5rem;
+  }
+  .controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 1rem 0;
+  }
+  .controls button {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  .controls button:hover {
+    background: var(--code-bg);
+  }
+  .controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .speed-slider {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .speed-slider input {
+    width: 100px;
+  }
+  .cost-table {
+    font-size: 0.9rem;
+  }
+  .cost-table .ar-cost {
+    color: var(--error);
+    font-weight: 600;
+  }
+  .cost-table .diff-cost {
+    color: var(--success);
+    font-weight: 600;
+  }
+  .highlight-box {
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1.5rem 0;
+    background: var(--blockquote-bg);
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Lesson 0002: Why Not Autoregressive?</h1>
+  <p class="lesson-meta">Estimated time: 25 min · Prerequisites: Lesson 0001</p>
+  <nav class="lesson-nav">
+    <a href="0001-feasibility-check.html">← Feasibility Check</a>
+    <a href="0003-core-mechanics.html">Next → Core Mechanics</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — Autoregressive generation is fundamentally sequential: to generate N tokens you must run N forward passes, one after another. This is not a software bug — it is a <em>structural</em> constraint baked into the "predict the next token" objective. Diffusion models break this chain by generating all tokens in parallel, trading N serial passes for a smaller number of parallel iterations.
+</blockquote>
+
+<h2>The Sequential Bottleneck</h2>
+
+<p>Every autoregressive language model — GPT, LLaMA, Gemma, Claude — works the same way at generation time:</p>
+
+<ol>
+  <li>Start with a prompt: <code>"The capital of Brazil is"</code></li>
+  <li>Run one forward pass → predict token <code>"Brasília"</code></li>
+  <li>Append it: <code>"The capital of Brazil is Brasília"</code></li>
+  <li>Run another forward pass → predict token <code>"."</code></li>
+  <li>Append it: <code>"The capital of Brazil is Brasília."</code></li>
+  <li>...repeat until done</li>
+</ol>
+
+<p>To generate <strong>N tokens</strong>, you must run <strong>N forward passes</strong>, each depending on the output of the previous one. There is no way to parallelize this — token 5 cannot be predicted until tokens 1-4 are known.</p>
+
+<div class="highlight-box">
+  <strong>This is the bottleneck.</strong> Not the FLOPs per pass, not the model size — the sequential dependency. Every generation is O(N) serial steps no matter how many GPUs you throw at it.
+</div>
+
+<h2>Interactive: AR vs Diffusion Generation</h2>
+
+<p>Watch how AR generates tokens one-by-one while diffusion reveals them in parallel steps. Adjust the sequence length and speed to feel the difference.</p>
+
+<div class="controls">
+  <label>Sequence length:
+    <select id="seqLen">
+      <option value="8">8 tokens</option>
+      <option value="16" selected>16 tokens</option>
+      <option value="32">32 tokens</option>
+    </select>
+  </label>
+  <label>Diffusion steps:
+    <select id="diffSteps">
+      <option value="4">4 steps</option>
+      <option value="8">8 steps</option>
+      <option value="16" selected>16 steps</option>
+      <option value="32">32 steps</option>
+    </select>
+  </label>
+  <div class="speed-slider">
+    <label>Speed: <span id="speedLabel">normal</span></label>
+    <input type="range" id="speedSlider" min="1" max="5" value="3">
+  </div>
+</div>
+
+<button id="runSimBtn" class="button">Run Simulation</button>
+
+<div class="comparison-visual">
+  <div>
+    <div class="gen-label">Autoregressive:</div>
+    <div id="arRow" style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.3rem;"></div>
+    <div class="time-counter" id="arTime">⏱ 0.0 s (0 passes)</div>
+  </div>
+  <div>
+    <div class="gen-label">Diffusion:</div>
+    <div id="diffRow" style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.3rem;"></div>
+    <div class="time-counter" id="diffTime">⏱ 0.0 s (0 steps)</div>
+  </div>
+</div>
+
+<p id="simResult" style="font-weight:600;min-height:1.5rem;"></p>
+
+<script>
+(function() {
+  const TOKENS = ['O','l','á',' ','m','u','n','d','o','!',' ','T','u','d','o',' ','b','e','m','?',' ','S','i','m',',',' ','t','u','d','o',' ','b','e','m','.'];
+  const arRow = document.getElementById('arRow');
+  const diffRow = document.getElementById('diffRow');
+  const arTime = document.getElementById('arTime');
+  const diffTime = document.getElementById('diffTime');
+  const simResult = document.getElementById('simResult');
+  const runBtn = document.getElementById('runSimBtn');
+  const seqLenSelect = document.getElementById('seqLen');
+  const diffStepsSelect = document.getElementById('diffSteps');
+  const speedSlider = document.getElementById('speedSlider');
+  const speedLabel = document.getElementById('speedLabel');
+
+  const speedLabelMap = {1:'very slow',2:'slow',3:'normal',4:'fast',5:'very fast'};
+  speedSlider.addEventListener('input', () => {
+    speedLabel.textContent = speedLabelMap[speedSlider.value];
+  });
+  speedLabel.textContent = speedLabelMap[speedSlider.value];
+
+  let running = false;
+  let abortFlag = false;
+
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function getDelay() {
+    const base = {1:400,2:250,3:150,4:70,5:30}[speedSlider.value] || 150;
+    return base;
+  }
+
+  function makeTokens(len) {
+    const result = [];
+    for (let i = 0; i < len; i++) {
+      result.push(TOKENS[i % TOKENS.length]);
+    }
+    return result;
+  }
+
+  function createTokenEl(text, type) {
+    const el = document.createElement('span');
+    el.className = 'token';
+    el.textContent = text;
+    return el;
+  }
+
+  async function runAR(tokens) {
+    const len = tokens.length;
+    arRow.innerHTML = '';
+    const els = [];
+    for (let i = 0; i < len; i++) {
+      const el = createTokenEl(tokens[i], 'ar');
+      if (i > 0) el.classList.add('pending');
+      arRow.appendChild(el);
+      els.push(el);
+    }
+    if (abortFlag) return 0;
+    await delay(100);
+
+    let passes = 0;
+    for (let pos = 0; pos < len; pos++) {
+      if (abortFlag) return passes;
+      els[pos].classList.remove('pending');
+      els[pos].classList.add('active-ar');
+      await delay(getDelay());
+      els[pos].classList.remove('active-ar');
+      els[pos].classList.add('done-ar');
+      passes++;
+      arTime.textContent = `⏱ ${(passes).toFixed(0)} passes (${passes} forward)`;
+    }
+    return passes;
+  }
+
+  async function runDiffusion(tokens, steps) {
+    const len = tokens.length;
+    diffRow.innerHTML = '';
+    const els = [];
+    for (let i = 0; i < len; i++) {
+      const el = createTokenEl('·', 'diff');
+      els.push(el);
+      diffRow.appendChild(el);
+    }
+    if (abortFlag) return 0;
+    await delay(100);
+
+    // Simulate diffusion: each step reveals more tokens with higher confidence
+    for (let step = 0; step < steps; step++) {
+      if (abortFlag) return step;
+      const progress = (step + 1) / steps;
+      // Gradually reveal tokens — earlier tokens reveal first
+      for (let pos = 0; pos < len; pos++) {
+        const threshold = 1.0 - (pos / len) * 0.7; // earlier positions reveal earlier
+        if (progress >= threshold) {
+          if (els[pos].textContent !== tokens[pos]) {
+            els[pos].textContent = tokens[pos];
+            els[pos].classList.add('active-diff');
+          }
+        }
+      }
+      // show some tokens as "almost sure"
+      for (let pos = 0; pos < len; pos++) {
+        if (els[pos].textContent === tokens[pos] && progress > 0.3) {
+          els[pos].classList.remove('active-diff');
+          els[pos].classList.add('done-diff');
+        }
+      }
+      diffTime.textContent = `⏱ Step ${step+1}/${steps} (${step+1} forward passes)`;
+      await delay(getDelay() * 0.8);
+    }
+
+    // Final reveal
+    for (let pos = 0; pos < len; pos++) {
+      els[pos].textContent = tokens[pos];
+      els[pos].classList.remove('active-diff');
+      els[pos].classList.add('done-diff');
+    }
+    diffTime.textContent = `⏱ ${steps} diffusion steps (${steps} forward passes)`;
+    return steps;
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (running) {
+      abortFlag = true;
+      await delay(50);
+      abortFlag = false;
+      running = false;
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Simulation';
+      return;
+    }
+
+    const seqLen = parseInt(seqLenSelect.value);
+    const diffSteps = parseInt(diffStepsSelect.value);
+    const tokens = makeTokens(seqLen);
+
+    running = true;
+    abortFlag = false;
+    runBtn.textContent = 'Stop';
+    simResult.textContent = '';
+
+    // Reset
+    arTime.textContent = '⏱ 0.0 s (0 passes)';
+    diffTime.textContent = '⏱ 0.0 s (0 steps)';
+
+    // Run AR first
+    const passes = await runAR(tokens);
+    if (abortFlag) { reset(); return; }
+
+    await delay(400);
+
+    // Then diffusion
+    const steps = await runDiffusion(tokens, diffSteps);
+    if (abortFlag) { reset(); return; }
+
+    // Show result
+    if (passes > 0 && steps > 0) {
+      const ratio = (passes / steps).toFixed(1);
+      simResult.textContent = `AR: ${passes} serial passes · Diffusion: ${steps} parallel passes · AR is ${ratio}× more serial steps for this length`;
+    }
+
+    reset();
+    function reset() {
+      running = false;
+      abortFlag = false;
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Simulation';
+    }
+  });
+})();
+</script>
+
+<h2>The Cost Curve</h2>
+
+<p>Here's what that sequential dependency costs in practice:</p>
+
+<table class="cost-table">
+  <tr>
+    <th>Generation Length</th>
+    <th>AR: Serial Forward Passes</th>
+    <th>Diffusion: Passes (64 steps)</th>
+    <th>Diffusion Advantage</th>
+  </tr>
+  <tr>
+    <td>128 tokens</td>
+    <td class="ar-cost">128</td>
+    <td class="diff-cost">64 (adjustable)</td>
+    <td>2× fewer passes</td>
+  </tr>
+  <tr>
+    <td>512 tokens</td>
+    <td class="ar-cost">512</td>
+    <td class="diff-cost">64</td>
+    <td>8× fewer passes</td>
+  </tr>
+  <tr>
+    <td>2048 tokens</td>
+    <td class="ar-cost">2,048</td>
+    <td class="diff-cost">64</td>
+    <td>32× fewer passes</td>
+  </tr>
+  <tr>
+    <td>8192 tokens</td>
+    <td class="ar-cost">8,192</td>
+    <td class="diff-cost">64</td>
+    <td>128× fewer passes</td>
+  </tr>
+</table>
+
+<p>Each pass is a full forward propagation through the model — transformers, attention, everything. The key insight: <strong>diffusion's cost does not grow with sequence length</strong> beyond what's needed for quality. You can use 64 steps for a 128-token output <em>or</em> a 8192-token output.</p>
+
+<div class="callout callout-warning">
+  <strong>But wait — aren't diffusion passes more expensive?</strong> They process all tokens at once (a full sequence matrix), while each AR pass processes a prefix. In practice, a single diffusion pass is roughly equivalent to one AR pass for the <em>full sequence length</em>. So diffusion at 64 steps costs ~64 "full-sequence" passes, while AR at 2048 tokens costs 2048 "prefix" passes. The arithmetic works in diffusion's favor at longer sequences — but <strong>the breakeven point</strong> depends on model architecture, sequence length, and number of diffusion steps.
+</div>
+
+<h2>The KV-Cache Trick (And Its Limits)</h2>
+
+<p>AR models have a clever optimization: the <strong>key-value cache</strong>. Instead of recomputing attention for all previous tokens each time, they cache the keys and values from earlier forward passes. Each new pass only computes attention for the <em>new</em> token against cached past.</p>
+
+<p>This helps — per-token FLOPs drop from O(L²) to O(L). But it doesn't change the fundamental <strong>serial dependency</strong>. The cost is now:</p>
+
+<ul>
+  <li><strong>Time</strong>: still O(N) serial steps (each step is cheaper, but still sequential)</li>
+  <li><strong>Memory</strong>: O(N × d) for the cache (2 × N × d_model bytes for keys + values)</li>
+</ul>
+
+<p>For a 2048-token sequence with d_model=4096 (a 7B-class model), the KV-cache alone takes <strong>~67 MB per sequence</strong>. At batch size 64, that's <strong>~4.3 GB</strong> — not negligible, and it grows linearly with sequence length.</p>
+
+<p>Diffusion models need <strong>no KV-cache at all</strong>. Every forward pass processes the full sequence with bidirectional (or full) attention — no masking, no caching. Your entire VRAM goes to weights and activations.</p>
+
+<h2>What Training Looks Like (For Completeness)</h2>
+
+<p>Ironically, AR models are trained <strong>in parallel</strong> using a technique called <strong>teacher forcing</strong>:</p>
+
+<pre><code>Input:  [The, capital, of, Brazil, is]
+Target: [capital, of, Brazil, is, Brasília]
+Loss:   cross_entropy(pred, target) across ALL positions simultaneously</code></pre>
+
+<p>The model predicts all next tokens at once — but this only works because the ground truth is known during training. At inference time, there's no ground truth, so you're forced into sequential generation.</p>
+
+<p>Diffusion models are <strong>trained and deployed with the same parallel structure</strong>. The training objective (predict the original tokens from a corrupted version) mirrors the inference procedure (denoise step by step). There is no train-inference mismatch.</p>
+
+<h2>The Essential Trade-Off</h2>
+
+<table>
+  <tr>
+    <th>Dimension</th>
+    <th>Autoregressive</th>
+    <th>Diffusion</th>
+  </tr>
+  <tr>
+    <td>Training parallelism</td>
+    <td>✅ Full (teacher forcing)</td>
+    <td>✅ Full (corrupt → predict)</td>
+  </tr>
+  <tr>
+    <td>Inference parallelism</td>
+    <td>❌ Sequential (token by token)</td>
+    <td>✅ Parallel (all tokens per step)</td>
+  </tr>
+  <tr>
+    <td>Cost per inference pass</td>
+    <td>O(L) FLOPs with KV-cache</td>
+    <td>O(L²) FLOPs (full attention)</td>
+  </tr>
+  <tr>
+    <td>Number of inference passes</td>
+    <td>L (fixed)</td>
+    <td>N_steps (adjustable, 4-1000+)</td>
+  </tr>
+  <tr>
+    <td>Memory overhead</td>
+    <td>KV-cache: O(L×d_model)</td>
+    <td>None (no cache)</td>
+  </tr>
+  <tr>
+    <td>Total inference FLOPs</td>
+    <td>O(L²) with causal masking</td>
+    <td>O(N_steps × L²) with full attention</td>
+  </tr>
+</table>
+
+<p>This table reveals something subtle: <strong>diffusion isn't strictly cheaper in total FLOPs</strong>. 64 steps of full-sequence attention can be more FLOPs than 2048 steps of cached AR generation. The advantage isn't raw FLOPs — it's <strong>wall-clock latency</strong> and <strong>memory efficiency</strong>:</p>
+
+<ul>
+  <li>64 sequential steps × 50ms per pass = <strong>3.2 seconds</strong></li>
+  <li>2048 sequential steps × 5ms per pass (with KV-cache) = <strong>10.2 seconds</strong></li>
+  <li>Parallel hardware utilization is often better for large batches of full sequences</li>
+</ul>
+
+<p>Diffusion wins on wall-clock time because passes are parallelizable and don't depend on each other (they depend on the sequence state, which evolves, but all tokens within a pass are computed simultaneously).</p>
+
+<h2>Why This Matters for Your L40S</h2>
+
+<p>With 48 GB VRAM and no KV-cache overhead, your L40S can run larger diffusion models than AR models at the same batch size. The bottleneck shifts from memory-bandwidth-bound AR generation to compute-bound diffusion passes — a tradeoff that often favors diffusion on datacenter GPUs.</p>
+
+<div class="callout callout-info">
+  <strong>Key takeaway:</strong> Autoregressive generation is an <strong>inherently serial algorithm</strong>. No amount of hardware acceleration can make it parallel — it's like trying to compute Fibonacci recursively in parallel. Diffusion architectures break the serial dependency by predicting all tokens simultaneously, then refining them over multiple passes. The cost is training (16× more compute), the benefit is inference (tunable latency, no KV-cache, long-sequence efficiency).
+</div>
+
+<h2>Primary Sources</h2>
+<ul>
+  <li><a href="https://arxiv.org/abs/2310.16834">SEDD: Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution</a> (ICML 2024 Best Paper) — See Section 1 for the motivation on parallel generation vs autoregressive.</li>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM: Simple and Effective Masked Diffusion Language Models</a> — See Section 2 for how masked diffusion breaks the sequential chain.</li>
+  <li><a href="https://arxiv.org/abs/2410.18514">SMDM: Scaling up Masked Diffusion Models on Text</a> — See Section 3 for the compute-efficiency comparison between MDMs and ARMs.</li>
+</ul>
+
+<h2>Check Your Understanding</h2>
+
+<div class="quiz">
+  <div class="quiz-question">Why can't autoregressive generation be parallelized like training?</div>
+  <div class="quiz-options">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      Because inference runs on different hardware than training
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      Because each token prediction depends on the previous token, which isn't known until after the previous forward pass completes
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      Because AR models use causal attention, which cannot be computed in parallel
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      Because KV-cache optimizations prevent parallel execution
+    </label>
+  </div>
+  <div class="quiz-feedback" id="feedback1"></div>
+  <button class="quiz-submit" onclick="checkQuiz1()">Check</button>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">What is the diffusion advantage at very long generation lengths (e.g., 8192 tokens)?</div>
+  <div class="quiz-options">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      Diffusion uses fewer steps than AR uses serial tokens, and steps don't grow with length
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      Diffusion is always faster at any length
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      There is no advantage — AR is always better
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      Diffusion avoids the KV-cache memory blowup that AR suffers at long sequences
+    </label>
+  </div>
+  <div class="quiz-feedback" id="feedback2"></div>
+  <button class="quiz-submit" onclick="checkQuiz2()">Check</button>
+</div>
+
+<script>
+function checkQuiz1() {
+  const selected = document.querySelector('input[name="q1"]:checked');
+  const fb = document.getElementById('feedback1');
+  if (!selected) { fb.textContent = 'Select an answer first.'; fb.className = 'quiz-feedback show'; return; }
+  const options = document.querySelectorAll('input[name="q1"]');
+  options.forEach(o => o.parentElement.className = 'quiz-option');
+  if (selected.value === 'b') {
+    selected.parentElement.className = 'quiz-option correct';
+    fb.textContent = '✅ Correct! Each AR step needs the previous token as input, creating an unbreakable sequential chain.';
+  } else {
+    selected.parentElement.className = 'quiz-option wrong';
+    document.querySelector('input[name="q1"][value="b"]').parentElement.className = 'quiz-option correct';
+    fb.textContent = '❌ Not quite. The answer is b: each token depends on the previous one, creating serial dependency.';
+  }
+  fb.className = 'quiz-feedback show';
+}
+
+function checkQuiz2() {
+  const selected = document.querySelector('input[name="q2"]:checked');
+  const fb = document.getElementById('feedback2');
+  if (!selected) { fb.textContent = 'Select an answer first.'; fb.className = 'quiz-feedback show'; return; }
+  const options = document.querySelectorAll('input[name="q2"]');
+  options.forEach(o => o.parentElement.className = 'quiz-option');
+  if (selected.value === 'a') {
+    selected.parentElement.className = 'quiz-option correct';
+    fb.textContent = '✅ Exactly! Diffusion steps stay constant (e.g., 64) regardless of output length. AR pays O(length) serial passes.';
+  } else {
+    selected.parentElement.className = 'quiz-option wrong';
+    document.querySelector('input[name="q2"][value="a"]').parentElement.className = 'quiz-option correct';
+    fb.textContent = '❌ Answer a is correct. Diffusion uses a fixed number of steps independent of sequence length. Answer d is also true (no KV-cache) but isn\'t the primary length advantage.';
+  }
+  fb.className = 'quiz-feedback show';
+}
+</script>
+
+<hr>
+<p><em>Questions? Ask the agent — every concept here can be unpacked deeper, visualized differently, or connected to the specific hardware you're working with.</em></p>
+
+<nav class="lesson-nav">
+  <a href="0001-feasibility-check.html">← Feasibility Check</a>
+  <a href="0003-core-mechanics.html">Next → Core Mechanics</a>
+</nav>
+
+</body>
+</html>

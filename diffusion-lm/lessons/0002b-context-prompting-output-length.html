@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bridge Note: Context, Prompting, and Output Length in Diffusion LMs</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .compare-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    background: var(--blockquote-bg);
+  }
+  .card h3 { margin-top: 0; }
+  .card .card-tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+  .card .card-tag.ar { background: #fef3c7; color: #92400e; }
+  .card .card-tag.diff { background: #dbeafe; color: #1e40af; }
+  .card .card-tag.both { background: #dcfce7; color: #166534; }
+  @media (prefers-color-scheme: dark) {
+    .card .card-tag.ar { background: #451a03; color: #fde68a; }
+    .card .card-tag.diff { background: #1e3a5f; color: #bfdbfe; }
+    .card .card-tag.both { background: #14532d; color: #bbf7d0; }
+  }
+  .diagram-box {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    text-align: center;
+  }
+  .diagram-box pre {
+    display: inline-block;
+    text-align: left;
+    background: none;
+    padding: 0.5rem;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Bridge: Context, Prompting &amp; Output Length</h1>
+  <p class="lesson-meta">Quick-reference addendum to Lesson 0002 · Prerequisites: Lesson 0002</p>
+  <nav class="lesson-nav">
+    <a href="0002-why-not-autoregressive.html">← Why Not Autoregressive?</a>
+    <a href="0003-core-mechanics.html">Next → Core Mechanics</a>
+  </nav>
+</div>
+
+<p>You asked three questions:</p>
+<ol>
+  <li>Must I decide the output length in advance?</li>
+  <li>Can I provide a prompt?</li>
+  <li>How does context window sizing work?</li>
+</ol>
+<p>These cut to the heart of how diffusion models actually get used. Let me address each one.</p>
+
+<hr>
+
+<h2>1. Output Length: Yes, You Decide Upfront — But There Are Workarounds</h2>
+
+<p><strong>Short answer:</strong> In a pure diffusion LM, you must set the output length before generation starts. This is the biggest practical difference from AR models.</p>
+
+<h3>Why? Because of how the process works</h3>
+
+<p>An AR model generates tokens one at a time. It can stop anytime (emit a stop token) or keep going. The sequence grows dynamically.</p>
+
+<p>A diffusion model starts with a fixed-length canvas — all tokens at once — and iteratively refines them. The output length equals the canvas size. You can't grow it mid-generation because the denoising process is tied to the positions.</p>
+
+<div class="compare-cards">
+  <div class="card">
+    <div class="card-tag ar">AR</div>
+    <h3>Autoregressive: Dynamic Length</h3>
+    <pre><code>Prompt → "The capital of Brazil is"
+Step 1: "Brasília"
+Step 2: "."
+Step 3: &lt;stop&gt;   ← model decides to stop here
+→ Output: "Brasília." (2 tokens, unknown beforehand)</code></pre>
+    <p>The model generates 2 tokens, then <em>decides</em> to stop. You never knew it would be 2 tokens — the model figured that out.</p>
+  </div>
+  <div class="card">
+    <div class="card-tag diff">Pure Diffusion</div>
+    <h3>Pure Diffusion: Fixed Length</h3>
+    <pre><code>Prompt → "The capital of Brazil is"
+Canvas: [MASK] [MASK] [MASK] [MASK]   ← you decide: 4 tokens
+Step 1: [·]   [·]   [·]   [·]         ← all noisy
+Step 8: [Bras] [ília] [.]   [&lt;stop&gt;] ← all refined together
+→ Output: "Brasília.&lt;stop&gt;" (exactly 4 tokens)</code></pre>
+    <p>You chose a 4-token canvas. The model filled all 4. If you wanted 10 tokens, you'd need a 10-token canvas. You can't generate "just a bit more" without re-running.</p>
+  </div>
+</div>
+
+<h3>Workarounds</h3>
+
+<p>Researchers have developed several strategies to deal with this:</p>
+
+<table>
+  <tr>
+    <th>Strategy</th>
+    <th>How it works</th>
+    <th>Used by</th>
+    <th>Caveat</th>
+  </tr>
+  <tr>
+    <td><strong>Over-generate &amp; truncate</strong></td>
+    <td>Set canvas to max allowed length, generate, then truncate at the stop token</td>
+    <td>Most pure diffusion LMs</td>
+    <td>Wastes compute on extra tokens. Can't exceed canvas size.</td>
+  </tr>
+  <tr>
+    <td><strong>Block-autoregressive</strong></td>
+    <td>Generate in blocks (e.g., 256 tokens) via diffusion, then chain blocks like AR. Each block depends on previous blocks.</td>
+    <td><strong>DiffusionGemma</strong>, Nemotron</td>
+    <td>Adds some sequential dependency back, but blocks are diffused in parallel internally.</td>
+  </tr>
+  <tr>
+    <td><strong>Iterative extension</strong></td>
+    <td>Generate N tokens. If more needed, append N new [MASK] tokens and continue diffusion.</td>
+    <td>Research prototypes</td>
+    <td>The new tokens don't benefit from the full diffusion process applied to the old ones.</td>
+  </tr>
+  <tr>
+    <td><strong>Fixed-length domain</strong></td>
+    <td>Use for tasks where output length is predictable (summarization: ~150 tokens, translation: ~same as input).</td>
+    <td>Production systems</td>
+    <td>Only works for tasks with bounded output.</td>
+  </tr>
+</table>
+
+<div class="callout callout-info">
+  <strong>Practical advice:</strong> For your experiments, <strong>over-generate &amp; truncate</strong> is simplest. Set canvas to 256 tokens, generate, look for &lt;stop&gt; or &lt;eos&gt;, trim. You waste some compute on the unused tokens, but it's simpler than block-autoregressive chaining.
+</div>
+
+<hr>
+
+<h2>2. Prompting: Yes, You Provide Input Text — Via Conditioning</h2>
+
+<p>Absolutely you can prompt a diffusion LM. The prompt is <strong>fixed</strong> (never masked, never noised) and the model attends to it bidirectionally — which is actually <em>more</em> powerful than AR's causal attention for understanding the prompt.</p>
+
+<h3>How it works visually</h3>
+
+<div class="diagram-box">
+  <pre><strong>Input to the model (one row = one token position):</strong>
+
+┌──────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+│   "The"  │"capital"│  "of"   │"Brazil" │  "is"   │ [MASK]  │ [MASK]  │
+├──────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+│  PROMPT  │ PROMPT  │ PROMPT  │ PROMPT  │ PROMPT  │ OUTPUT  │ OUTPUT  │
+│ never    │ never   │ never   │ never   │ never   │ noisy,  │ noisy,  │
+│ masked   │ masked  │ masked  │ masked  │ masked  │ refined │ refined │
+│          │         │         │         │         │ each    │ each    │
+│          │         │         │         │         │ step    │ step    │
+└──────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+                  ◄──── Bidirectional Attention ────►
+                  (all tokens attend to all tokens)
+</code></pre>
+</div>
+
+<p>The model sees both prompt and (noisy/masked) output tokens. During each diffusion step, it predicts the denoised version of the output tokens, using the prompt as context. The prompt acts like a fixed anchor that guides the denoising.</p>
+
+<h3>Key difference from AR prompting</h3>
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>AR (GPT-style)</th>
+    <th>Diffusion (masked)</th>
+  </tr>
+  <tr>
+    <td>Prompt attention</td>
+    <td>Causal (can only see past tokens)</td>
+    <td><strong>Bidirectional</strong> (can see entire prompt)</td>
+  </tr>
+  <tr>
+    <td>Prompt length</td>
+    <td>No limit beyond context window</td>
+    <td>No limit beyond context window</td>
+  </tr>
+  <tr>
+    <td>Prompt + output</td>
+    <td>Contiguous (prompt then output)</td>
+    <td>Contiguous (prompt masked-portion)</td>
+  </tr>
+  <tr>
+    <td>Prefix-preserving</td>
+    <td>Yes — early tokens never change</td>
+    <td>Yes — prompt tokens stay fixed</td>
+  </tr>
+</table>
+
+<div class="callout callout-success">
+  <strong>Bidirectional attention is actually better for understanding prompts.</strong> If your prompt is "The capital of Brazil is", an LM with bidirectional attention can see all 5 words at once and build a richer representation than one that reads left-to-right. This is why BERT-style encoders were better than GPT at understanding tasks (classification, NER) — and diffusion LMs inherit this advantage.
+</div>
+
+<hr>
+
+<h2>3. Context Window Sizing: Same Constraints, Different Bottlenecks</h2>
+
+<p>The context window = prompt tokens + output tokens. The architecture determines the maximum total length. Here's how the same techniques apply:</p>
+
+<table>
+  <tr>
+    <th>Technique</th>
+    <th>AR Models</th>
+    <th>Diffusion Models</th>
+  </tr>
+  <tr>
+    <td><strong>RoPE / Positional Encodings</strong></td>
+    <td>Supports extrapolation (NTK-aware scaling, YaRN, etc.) to extend beyond training length</td>
+    <td><strong>Same</strong> — most diffusion LMs use RoPE. Same extrapolation techniques apply.</td>
+  </tr>
+  <tr>
+    <td><strong>Flash Attention</strong></td>
+    <td>Required for long sequences. O(L²) attention handled via tiling.</td>
+    <td><strong>Same</strong> — diffusion models also use standard attention and benefit from Flash Attention equally.</td>
+  </tr>
+  <tr>
+    <td><strong>KV-cache growth</strong></td>
+    <td>O(L × d_model) — big problem at 128K+</td>
+    <td>❌ <strong>Not applicable</strong> — no KV-cache needed</td>
+  </tr>
+  <tr>
+    <td><strong>Full attention memory</strong></td>
+    <td>O(L²) during training; at inference, KV-cache + causal masking helps</td>
+    <td>O(L²) during training AND inference (no causal mask savings)</td>
+  </tr>
+  <tr>
+    <td><strong>Sliding window / sparse attention</strong></td>
+    <td>Common (e.g., Mistral's sliding window, LongFormer)</td>
+    <td><strong>Same</strong> — can be applied to diffusion LMs</td>
+  </tr>
+  <tr>
+    <td><strong>Ring-Attention / sequence parallelism</strong></td>
+    <td>Distributes L² across GPUs</td>
+    <td><strong>Same</strong> — can distribute across GPUs</td>
+  </tr>
+</table>
+
+<h3>The real bottleneck: total sequence length × diffusion steps</h3>
+
+<p>Here's the hidden cost. At inference, an AR model pays the attention cost once per token. A diffusion model pays it per diffusion step. For 64 steps at 128K context:</p>
+
+<pre><code>AR inference on 128K tokens:
+  - 128K forward passes, each with O(1) KV-cache-augmented attention
+  - Total attention FLOPs: ~O(L²) amortized across passes
+  - Memory: KV-cache = 2 × 128K × 4096 bytes ≈ 1 GB
+
+Diffusion inference on 128K tokens (64 steps):
+  - 64 forward passes, each with O(L²) full attention
+  - Total attention FLOPs: 64 × O(L²)
+  - Memory: No KV-cache, but attention matrix for 128K = 16B entries = 64 GB
+  - ✅ Flash Attention fixes this (never materializes the full matrix)
+  - But FLOPs remain: ~64× more attention compute than AR</code></pre>
+
+<p>So at very long contexts (128K+), <strong>AR has a compute advantage</strong> because the KV-cache makes per-token attention cheap. <strong>Diffusion pays full-attention cost per step.</strong></p>
+
+<p>This is where <strong>DiffuMamba</strong>'s SSM backbone matters: Mamba has O(L) complexity instead of O(L²). So at 128K context:</p>
+
+<pre><code>Transformer diffusion:  64 steps × O(L²) attention  → very expensive
+Mamba diffusion:        64 steps × O(L) state scan  → much cheaper</code></pre>
+
+<h3>Current context window ceilings (diffusion LMs)</h3>
+
+<table>
+  <tr>
+    <th>Model</th>
+    <th>Train Context</th>
+    <th>Architecture</th>
+    <th>Max Extrapolated</th>
+    <th>Bottleneck</th>
+  </tr>
+  <tr>
+    <td>MDLM</td>
+    <td>1024</td>
+    <td>Transformer (DiT)</td>
+    <td>~2048 (RoPE)</td>
+    <td>Designed for small-scale experiments</td>
+  </tr>
+  <tr>
+    <td>SEDD</td>
+    <td>1024</td>
+    <td>Transformer (DiT)</td>
+    <td>~2048</td>
+    <td>Standard attention bound</td>
+  </tr>
+  <tr>
+    <td>LLaDA</td>
+    <td>4096</td>
+    <td>Transformer (decoder)</td>
+    <td>~8192 (RoPE extrapolation)</td>
+    <td>Full attention L² at training time</td>
+  </tr>
+  <tr>
+    <td><strong>DiffusionGemma</strong></td>
+    <td>Not disclosed</td>
+    <td>MoE Transformer</td>
+    <td>Likely 8K-32K</td>
+    <td>MoE memory + attention</td>
+  </tr>
+  <tr>
+    <td><strong>DiffuMamba</strong></td>
+    <td>Not disclosed</td>
+    <td>Mamba (SSM)</td>
+    <td>Likely 128K+</td>
+    <td>O(L) state — much cheaper for long contexts</td>
+  </tr>
+</table>
+
+<div class="callout callout-warning">
+  <strong>Key insight:</strong> If long context (128K+) is important to you, <strong>DiffuMamba's SSM approach is strategically more interesting</strong> than DiffusionGemma's transformer approach. The O(L) vs O(L²) scaling makes a massive difference at 128K — especially when multiplied by 64 diffusion steps vs 1 AR pass.
+</div>
+
+<h2>Summary Table</h2>
+
+<table>
+  <tr>
+    <th>Aspect</th>
+    <th>AR (GPT-style)</th>
+    <th>Diffusion (transformer backbone)</th>
+    <th>Diffusion (SSM/Mamba backbone)</th>
+  </tr>
+  <tr>
+    <td>Output length</td>
+    <td>Dynamic (stop token)</td>
+    <td>Fixed upfront (workarounds exist)</td>
+    <td>Fixed upfront (same workarounds)</td>
+  </tr>
+  <tr>
+    <td>Prompting</td>
+    <td>✅ Yes (causal)</td>
+    <td>✅ Yes (bidirectional — better)</td>
+    <td>✅ Yes (SSM processes full sequence)</td>
+  </tr>
+  <tr>
+    <td>Context scaling (training)</td>
+    <td>O(L²) attention</td>
+    <td>O(L²) attention (same)</td>
+    <td>O(L) scanning (cheaper)</td>
+  </tr>
+  <tr>
+    <td>Context scaling (inference)</td>
+    <td>O(L) with KV-cache</td>
+    <td>O(steps × L²) attention</td>
+    <td>O(steps × L) scanning</td>
+  </tr>
+  <tr>
+    <td>Long context (128K+)</td>
+    <td>Feasible (ring-attention + KV-cache)</td>
+    <td>Expensive (L² × steps)</td>
+    <td>✅ Feasible (O(L) × steps)</td>
+  </tr>
+</table>
+
+<h2>Recipe for Your L40S Context Experiments</h2>
+
+<p>If you want to experiment with this on your hardware:</p>
+
+<ol>
+  <li><strong>Start with LLaDA (4096 context)</strong> — it fits on your L40S in BF16. Prompt it with Portuguese text, over-generate to 4096 tokens, observe quality.</li>
+  <li><strong>Try DiffuMamba when code is released</strong> — the Mamba backbone should handle longer contexts (16K-32K) more efficiently on the same GPU.</li>
+  <li><strong>Build your tiny model with RoPE</strong> — Lesson 0004 (hands-on) will use RoPE, so your tiny model can extrapolate beyond its training length (e.g., train at 256, infer at 512).</li>
+</ol>
+
+<hr>
+<p><em>Still unclear? Ask me. This is the practical side of diffusion LMs — the part that matters when you actually sit down to build something.</em></p>
+
+<nav class="lesson-nav">
+  <a href="0002-why-not-autoregressive.html">← Why Not Autoregressive?</a>
+  <a href="0003-core-mechanics.html">Next → Core Mechanics</a>
+</nav>
+
+</body>
+</html>
