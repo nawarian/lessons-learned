@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Real Training Costs — Magalu Cloud (R$)</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  td.r { text-align: right; font-family: var(--font-mono); font-size: 0.82rem; }
+  th.r { text-align: right; }
+  .cheap { color: var(--success); font-weight: 600; }
+  .moderate { color: #d97706; font-weight: 600; }
+  .expensive { color: var(--error); font-weight: 600; }
+  .note { font-size: 0.85rem; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<h1>Real Training Costs — Magalu Cloud (R$)</h1>
+<p class="lesson-meta">L40S GPU pricing from magalu.cloud/precos/virtual-machines · DP (Dedicated Performance) class · Linux</p>
+
+<h2>Available VM Types (DP Class with L40S GPUs)</h2>
+
+<table>
+  <tr><th>VM Type</th><th>GPUs</th><th>vCPU</th><th>RAM</th><th>Disk</th><th class="r">Hourly (R$)</th><th class="r">Monthly (R$)</th></tr>
+  <tr><td><strong>L40Sx1-DP-8-64-100</strong></td><td>1× L40S</td><td>8</td><td>64 GB</td><td>100 GB</td><td class="r"><strong>8,64</strong></td><td class="r">6.310</td></tr>
+  <tr><td>L40Sx1-DP-8-64-300</td><td>1× L40S</td><td>8</td><td>64 GB</td><td>300 GB</td><td class="r">8,80</td><td class="r">6.426</td></tr>
+  <tr><td><strong>L40Sx2-DP-16-128-100</strong></td><td><strong>2× L40S</strong></td><td>16</td><td>128 GB</td><td>100 GB</td><td class="r"><strong>17,21</strong></td><td class="r">12.562</td></tr>
+  <tr><td>L40Sx2-DP-16-128-300</td><td>2× L40S</td><td>16</td><td>128 GB</td><td>300 GB</td><td class="r">17,37</td><td class="r">12.678</td></tr>
+  <tr><td>L40Sx2-DP-32-256-100</td><td>2× L40S</td><td>32</td><td>256 GB</td><td>100 GB</td><td class="r">22,34</td><td class="r">16.306</td></tr>
+  <tr><td>L40Sx2-DP-64-512-100</td><td>2× L40S</td><td>64</td><td>512 GB</td><td>100 GB</td><td class="r">32,59</td><td class="r">23.794</td></tr>
+</table>
+
+<p class="note">Your existing VM = L40Sx1-DP-8-64-100 at R$ 8,64/h (likely already paid monthly). New VMs for clustering cost extra.</p>
+
+<h2>Training Costs: All Scenarios</h2>
+
+<h3>🟢 Scenario A: 300M Model (6B tokens)</h3>
+
+<table>
+  <tr><th>Cluster</th><th>GPUs</th><th>VM Config</th><th class="r">VM Cost/h</th><th class="r">Time</th><th class="r">Total (R$)</th><th>Verdict</th></tr>
+  <tr>
+    <td>Existing VM</td>
+    <td>1× L40S</td>
+    <td>L40Sx1-8-64-100</td>
+    <td class="r">R$ 8,64</td>
+    <td class="r">25 h</td>
+    <td class="r cheap">R$ 216</td>
+    <td>✅ Already paid monthly<br><span class="note">If already running: R$ 0 extra</span></td>
+  </tr>
+  <tr>
+    <td><strong>2 nodes (4 GPUs)</strong></td>
+    <td><strong>4× L40S</strong></td>
+    <td><strong>2× L40Sx2-16-128-100</strong></td>
+    <td class="r"><strong>R$ 34,42</strong></td>
+    <td class="r"><strong>8 h</strong></td>
+    <td class="r cheap"><strong>R$ 275</strong></td>
+    <td><strong>✅ Best ROI</strong><br><span class="note">2 new VMs, 8h each</span></td>
+  </tr>
+  <tr>
+    <td>4 nodes (8 GPUs)</td>
+    <td>8× L40S</td>
+    <td>4× L40Sx2-16-128-100</td>
+    <td class="r">R$ 68,84</td>
+    <td class="r">4,8 h</td>
+    <td class="r cheap">R$ 330</td>
+    <td>⚡ Fastest<br><span class="note">Under 5h, but 4 VMs</span></td>
+  </tr>
+</table>
+
+<p class="note"><strong>Reality check:</strong> 300M on your existing VM costs R$ 0 extra (already paying monthly). Clustering saves time but costs more in absolute R$. Only cluster if you need results faster than 25h.</p>
+
+<h3>🟡 Scenario B: 1B Model (20B tokens)</h3>
+
+<table>
+  <tr><th>Cluster</th><th>GPUs</th><th>VM Config</th><th class="r">VM Cost/h</th><th class="r">Time</th><th class="r">Total (R$)</th><th>Verdict</th></tr>
+  <tr>
+    <td>Existing VM</td>
+    <td>1× L40S</td>
+    <td>L40Sx1-8-64-100</td>
+    <td class="r">R$ 8,64</td>
+    <td class="r">28 days</td>
+    <td class="r expensive">R$ 5.806</td>
+    <td>❌ 28 days is too long</td>
+  </tr>
+  <tr>
+    <td>1 node, 2 GPUs</td>
+    <td>2× L40S</td>
+    <td>1× L40Sx2-16-128-100</td>
+    <td class="r">R$ 17,21</td>
+    <td class="r">14,8 days</td>
+    <td class="r moderate">R$ 6.114</td>
+    <td>⚠️ Still 15 days</td>
+  </tr>
+  <tr>
+    <td><strong>4 nodes, 8 GPUs (FSDP)</strong></td>
+    <td><strong>8× L40S</strong></td>
+    <td><strong>4× L40Sx2-16-128-100</strong></td>
+    <td class="r"><strong>R$ 68,84</strong></td>
+    <td class="r"><strong>2,2 days</strong></td>
+    <td class="r moderate"><strong>R$ 3.635</strong></td>
+    <td><strong>✅ Best option</strong><br><span class="note">52h total, 4 VMs</span></td>
+  </tr>
+  <tr>
+    <td>8 nodes, 16 GPUs</td>
+    <td>16× L40S</td>
+    <td>8× L40Sx2-16-128-100</td>
+    <td class="r">R$ 137,68</td>
+    <td class="r">1,3 days</td>
+    <td class="r moderate">R$ 4.295</td>
+    <td>⚡ Fastest<br><span class="note">31h, but 8 VMs</span></td>
+  </tr>
+</table>
+
+<p class="note"><strong>Compared to earlier USD estimates:</strong> R$ 3.635 ≈ ~$660 USD at current rates. About 2× earlier estimates due to Brazilian cloud pricing premium.</p>
+
+<h3>🔴 Scenario C: 3B Model (20B tokens) — Stretch Goal</h3>
+
+<table>
+  <tr><th>Cluster</th><th>GPUs</th><th>VM Config</th><th class="r">VM Cost/h</th><th class="r">Time</th><th class="r">Total (R$)</th><th>Verdict</th></tr>
+  <tr>
+    <td>1 node, 2 GPUs</td>
+    <td>2× L40S</td>
+    <td>L40Sx2-16-128-100</td>
+    <td class="r">R$ 17,21</td>
+    <td class="r">21 days</td>
+    <td class="r expensive">R$ 8.674</td>
+    <td>❌ Too expensive</td>
+  </tr>
+  <tr>
+    <td><strong>4 nodes, 8 GPUs (FSDP)</strong></td>
+    <td><strong>8× L40S</strong></td>
+    <td><strong>4× L40Sx2-16-128-100</strong></td>
+    <td class="r"><strong>R$ 68,84</strong></td>
+    <td class="r"><strong>3 days</strong></td>
+    <td class="r expensive"><strong>R$ 4.956</strong></td>
+    <td><strong>⚠️ Possible, R$ 5K</strong><br><span class="note">72h of cluster time</span></td>
+  </tr>
+  <tr>
+    <td>8 nodes, 16 GPUs</td>
+    <td>16× L40S</td>
+    <td>8× L40Sx2-16-128-100</td>
+    <td class="r">R$ 137,68</td>
+    <td class="r">1,5 days</td>
+    <td class="r expensive">R$ 4.956</td>
+    <td>Same cost, faster<br><span class="note">36h of cluster time</span></td>
+  </tr>
+</table>
+
+<h2>💰 The "Use Your Existing VM" Strategy</h2>
+
+<p>Your existing VM costs <strong>R$ 6.310/month</strong> (ongoing). For training, the incremental cost depends:</p>
+
+<table>
+  <tr><th>Scenario</th><th>On existing VM</th><th>With new VMs</th><th>Recommendation</th></tr>
+  <tr>
+    <td>300M (6B tokens)</td>
+    <td class="r cheap">R$ 0 extra</td>
+    <td class="r">R$ 275-330</td>
+    <td>Use existing VM. No reason to cluster.</td>
+  </tr>
+  <tr>
+    <td>1B (20B tokens)</td>
+    <td class="r expensive">R$ 5.806 (28d)</td>
+    <td class="r moderate">R$ 3.635 (2.2d)</td>
+    <td>Cluster saves R$ 2.171 and 26 days. Worth it.</td>
+  </tr>
+  <tr>
+    <td>3B (20B tokens)</td>
+    <td class="r expensive">R$ 8.674+ (21d)</td>
+    <td class="r expensive">R$ 4.956 (3d)</td>
+    <td>Cluster saves R$ 3.718. Only if you need quality.</td>
+  </tr>
+</table>
+
+<h2>⚡ Speculation: 30B Model — The Reality Check</h2>
+
+<p>You asked about a 30B model. Let me be direct:</p>
+
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Interpretation</th></tr>
+  <tr><td>Model states (training)</td><td>30B × 16 bytes = 480 GB</td><td>Fills 10× L40S before activations</td></tr>
+  <tr><td>Minimum GPUs</td><td><strong>16-20× L40S</strong></td><td>8-10 nodes with L40Sx2</td></tr>
+  <tr><td>Minimum cluster</td><td><strong>8-10 VMs × L40Sx2</strong></td><td>R$ 138-172/h total</td></tr>
+  <tr><td>Data (Chinchilla)</td><td>~600B tokens</td><td>2-3 TB of text, needs extra block storage</td></tr>
+  <tr><td>Training time estimate</td><td><strong>~160 days</strong></td><td>At 16 GPUs, with FSDP</td></tr>
+  <tr><td>With 16× diffusion gap</td><td><strong>Not computable</strong></td><td>Effectively infinite on this hardware</td></tr>
+  <tr><td>Cloud cost estimate</td><td><strong>R$ 530.000+</strong></td><td>160d × R$ 138/h… before storage</td></tr>
+</table>
+
+<p><strong>30B is not remotely feasible on this hardware.</strong> Even DiffusionGemma (26B MoE, 4B active) needed TPU v5p pods — Google's custom hardware. On L40S nodes, you'd need:</p>
+
+<ul>
+  <li>A cluster you do not have (16+ GPUs)</li>
+  <li>Network interconnects you do not have (InfiniBand or NVLink — 100 Gbps Ethernet is too slow for 30B FSDP)</li>
+  <li>Months you do not have (160 days minimum)</li>
+  <li>A budget you do not have (R$ 500K+)</li>
+</ul>
+
+<p><strong>The 30B question answers itself: focus on 300M → 1B → maybe 3B.</strong></p>
+
+<h2>💡 The Smarter Path: Fine-tune LLaDA 8B</h2>
+
+<p>Since we're looking at real Brazilian pricing, let me re-introduce this option with actual numbers:</p>
+
+<table>
+  <tr><th>Approach</th><th>Cost (R$)</th><th>Time</th><th>Quality</th></tr>
+  <tr>
+    <td>300M scratch-trained</td>
+    <td class="r cheap">R$ 0-216</td>
+    <td>1 day</td>
+    <td>~100M AR equivalent, domain-specialized</td>
+  </tr>
+  <tr>
+    <td>1B scratch-trained (cluster)</td>
+    <td class="r moderate">R$ 3.635</td>
+    <td>2.2 days</td>
+    <td>~250M AR equivalent, domain-specialized</td>
+  </tr>
+  <tr>
+    <td><strong>LLaDA 8B LoRA fine-tune</strong></td>
+    <td class="r cheap"><strong>R$ 0-200</strong></td>
+    <td><strong>~6 hours</strong></td>
+    <td><strong>Full 8B quality, domain-specialized</strong></td>
+  </tr>
+</table>
+
+<p>LLaDA 8B in 4-bit uses ~6 GB VRAM, fits on your existing VM. A LoRA fine-tune on Portuguese+Code data would take <strong>hours, not days</strong> — and give you an 8B diffusion model's quality (not 250M). The tradeoff: you don't own the architecture, but you get a working model for a fraction of the cost.</p>
+
+<h2>Summary: Cost vs Quality for Each R$ Spent</h2>
+
+<table>
+  <tr><th>Path</th><th>Investment (R$)</th><th>Time</th><th>Tokens generated</th><th>Cost per million tokens (inference)</th></tr>
+  <tr>
+    <td>300M scratch (existing VM)</td>
+    <td>R$ 0-216</td>
+    <td>1 day</td>
+    <td>~500 tok/s (1 GPU)</td>
+    <td>~R$ 0,005</td>
+  </tr>
+  <tr>
+    <td>1B scratch (4 nodes cluster)</td>
+    <td>R$ 3.635</td>
+    <td>2.2 days</td>
+    <td>~200 tok/s (1 GPU)</td>
+    <td>~R$ 0,012</td>
+  </tr>
+  <tr>
+    <td>LLaDA 8B LoRA (existing VM)</td>
+    <td>R$ 0-200</td>
+    <td>6 hours</td>
+    <td>~50-200 tok/s (1 GPU, quantized)</td>
+    <td>~R$ 0,048</td>
+  </tr>
+  <tr>
+    <td>3B scratch (4 nodes cluster)</td>
+    <td>R$ 4.956</td>
+    <td>3 days</td>
+    <td>~80 tok/s (1 GPU)</td>
+    <td>~R$ 0,030</td>
+  </tr>
+</table>
+
+<p>Inference costs assume you own the VM and run 24/7. The 300M model is cheapest to run but lowest quality. The fine-tuned LLaDA is highest quality but largest model to load.</p>
+
+<hr>
+<p><em>Pricing scraped from Magalu Cloud on July 2025. Subject to change. Does not include potential discounts (reserved instances, committed use, etc.).</em></p>
+
+</body>
+</html>

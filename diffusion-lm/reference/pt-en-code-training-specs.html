@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Cluster Training Scenarios for PT+EN+Code Diffusion LM</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .speedup { font-weight: 600; }
+  .speedup.good { color: var(--success); }
+  .speedup.ok { color: #d97706; }
+  .cluster-grid { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; }
+  .cluster-card {
+    flex: 1; min-width: 200px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 1rem;
+    background: var(--blockquote-bg);
+  }
+  .cluster-card h3 { margin-top: 0; }
+  .cluster-card .count { font-size: 2rem; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>Cluster Training: PT+EN+Code Diffusion LM</h1>
+<p class="lesson-meta">Scale-out scenarios for 2× L40S nodes · Interconnect: 100 Gbps Ethernet</p>
+
+<div class="cluster-grid">
+  <div class="cluster-card">
+    <div class="count">1</div>
+    <h3>Node (baseline)</h3>
+    <p>2× L40S<br>96 GB VRAM<br>364 TFLOPS</p>
+  </div>
+  <div class="cluster-card">
+    <div class="count">2</div>
+    <h3>Nodes</h3>
+    <p>4× L40S<br>192 GB VRAM<br>728 TFLOPS</p>
+  </div>
+  <div class="cluster-card">
+    <div class="count">4</div>
+    <h3>Nodes</h3>
+    <p>8× L40S<br>384 GB VRAM<br>1,456 TFLOPS</p>
+  </div>
+  <div class="cluster-card">
+    <div class="count">8</div>
+    <h3>Nodes</h3>
+    <p>16× L40S<br>768 GB VRAM<br>2,912 TFLOPS</p>
+  </div>
+</div>
+
+<h2>How We Speed Things Up</h2>
+
+<p>For your model sizes (300M to 3B), the main lever is <strong>data parallelism</strong> — each GPU holds a full copy of the model and processes different data. Gradients are synced via all-reduce once per step.</p>
+
+<p>For larger models (3B+), <strong>FSDP</strong> helps by sharding model states across GPUs, trading memory for a small communication overhead. This lets you use larger batch sizes than pure data parallelism.</p>
+
+<table>
+  <tr>
+    <th>Strategy</th>
+    <th>When to use</th>
+    <th>Memory per GPU</th>
+    <th>Comm overhead</th>
+    <th>Works on your cluster?</th>
+  </tr>
+  <tr>
+    <td><strong>Data Parallel (DP)</strong></td>
+    <td>Model fits in one GPU</td>
+    <td>Full model copy</td>
+    <td>Gradient all-reduce once/step</td>
+    <td>✅ Yes (model sizes ≤1B)</td>
+  </tr>
+  <tr>
+    <td><strong>FSDP</strong></td>
+    <td>Model barely fits / need larger batch</td>
+    <td>~1/N of model states</td>
+    <td>Gather/scatter per layer (overlapped with compute)</td>
+    <td>✅ Yes (all model sizes)</td>
+  </tr>
+  <tr>
+    <td><strong>Tensor Parallel</strong></td>
+    <td>Very large models, need NVLink speed</td>
+    <td>~1/N of each layer</td>
+    <td>All-reduce per operation (very frequent)</td>
+    <td>❌ No (needs NVLink)</td>
+  </tr>
+  <tr>
+    <td><strong>Pipeline Parallel</strong></td>
+    <td>Extremely deep models (40+ layers)</td>
+    <td>~1/N of layers</td>
+    <td>Activations transferred between stages</td>
+    <td>⚠️ Works but adds bubble overhead</td>
+  </tr>
+</table>
+
+<h2>Scenario A: 300M Model — The Sweet Spot</h2>
+
+<p>Model fits comfortably in one GPU (~15 GB). Pure data parallelism gives near-linear scaling.</p>
+
+<table>
+  <tr>
+    <th>Cluster</th>
+    <th>GPUs</th>
+    <th>Global batch/step</th>
+    <th>Steps (6B tokens)</th>
+    <th>Time per step</th>
+    <th>Total time</th>
+    <th>Speedup</th>
+    <th>Cloud cost</th>
+  </tr>
+  <tr>
+    <td>1 node (baseline)</td>
+    <td>1× L40S</td>
+    <td>32 × 1024 = 32,768</td>
+    <td>183K</td>
+    <td>0.50s</td>
+    <td><strong>25.4 hours</strong></td>
+    <td>1×</td>
+    <td>~$20</td>
+  </tr>
+  <tr style="background: var(--table-stripe);">
+    <td><strong>2 nodes</strong></td>
+    <td><strong>4× L40S</strong></td>
+    <td><strong>32 × 4 × 1024 = 131,072</strong></td>
+    <td><strong>45.8K</strong></td>
+    <td><strong>0.50s + 0.15s comm = 0.65s</strong></td>
+    <td><strong>8.3 hours</strong> 🟢</td>
+    <td><span class="speedup good">3.1×</span></td>
+    <td>~$13</td>
+  </tr>
+  <tr>
+    <td>4 nodes</td>
+    <td>8× L40S</td>
+    <td>32 × 8 × 1024 = 262,144</td>
+    <td>22.9K</td>
+    <td>0.50s + 0.25s comm = 0.75s</td>
+    <td><strong>4.8 hours</strong> 🟢</td>
+    <td><span class="speedup good">5.3×</span></td>
+    <td>~$15</td>
+  </tr>
+  <tr>
+    <td>8 nodes</td>
+    <td>16× L40S</td>
+    <td>32 × 16 × 1024 = 524,288</td>
+    <td>11.4K</td>
+    <td>0.50s + 0.40s comm = 0.90s</td>
+    <td><strong>2.9 hours</strong> 🟢</td>
+    <td><span class="speedup good">8.8×</span></td>
+    <td>~$22</td>
+  </tr>
+</table>
+
+<p>At 8+ GPUs, communication overhead starts eating into returns. Going from 4→8 GPUs gives 1.7× more speedup (not 2×). Beyond 8 GPUs, you'd need faster interconnects (e.g., InfiniBand) to keep scaling.</p>
+
+<div class="callout callout-success">
+  <strong>Bottom line for 300M:</strong> 2 nodes (4 GPUs) is the sweet spot — 8 hours instead of 25, for just $13. Going to 8 GPUs gets you under 3 hours but costs more and wastes compute on communication.
+</div>
+
+<h2>Scenario B: 1B Model — The Workhorse</h2>
+
+<p>Fits on one GPU (~26 GB) with room for modest batch sizes. Data parallel on multiple GPUs lets you increase throughput.</p>
+
+<table>
+  <tr>
+    <th>Cluster</th>
+    <th>GPUs</th>
+    <th>Global batch/step</th>
+    <th>Steps (20B tokens)</th>
+    <th>Time per step</th>
+    <th>Total time</th>
+    <th>Speedup</th>
+    <th>Cloud cost</th>
+  </tr>
+  <tr>
+    <td>1 node (baseline)</td>
+    <td>1× L40S</td>
+    <td>16 × 1024 = 16,384</td>
+    <td>1.22M</td>
+    <td>2.0s</td>
+    <td><strong>28.2 days</strong></td>
+    <td>1×</td>
+    <td>~$300</td>
+  </tr>
+  <tr style="background: var(--table-stripe);">
+    <td><strong>1 node, 2 GPUs</strong></td>
+    <td><strong>2× L40S</strong></td>
+    <td><strong>16 × 2 × 1024 = 32,768</strong></td>
+    <td><strong>610K</strong></td>
+    <td><strong>2.0s + 0.1s (intra-node PCIe) = 2.1s</strong></td>
+    <td><strong>14.8 days</strong> 🟡</td>
+    <td><span class="speedup ok">1.9×</span></td>
+    <td>~$320</td>
+  </tr>
+  <tr style="background: var(--table-stripe);">
+    <td><strong>2 nodes, 4 GPUs</strong></td>
+    <td><strong>4× L40S</strong></td>
+    <td><strong>16 × 4 × 1024 = 65,536</strong></td>
+    <td><strong>305K</strong></td>
+    <td><strong>2.0s + 0.30s = 2.3s</strong></td>
+    <td><strong>8.1 days</strong> 🟡</td>
+    <td><span class="speedup good">3.5×</span></td>
+    <td>~$320</td>
+  </tr>
+  <tr>
+    <td>4 nodes, 8 GPUs</td>
+    <td>8× L40S</td>
+    <td>16 × 8 × 1024 = 131,072</td>
+    <td>152.6K</td>
+    <td>2.0s + 0.50s = 2.5s</td>
+    <td><strong>4.4 days</strong> 🟢</td>
+    <td><span class="speedup good">6.4×</span></td>
+    <td>~$360</td>
+  </tr>
+</table>
+
+<p>With FSDP instead of pure DP on 8 GPUs, you can increase per-GPU batch from 16 to 32 (freed VRAM from model sharding), cutting steps in half:</p>
+
+<table>
+  <tr>
+    <th>Cluster (with FSDP)</th>
+    <th>GPUs</th>
+    <th>Global batch</th>
+    <th>Steps</th>
+    <th>Time</th>
+    <th>Speedup from baseline</th>
+  </tr>
+  <tr style="background: var(--table-stripe);">
+    <td><strong>4 nodes, FSDP</strong></td>
+    <td><strong>8× L40S</strong></td>
+    <td><strong>32 × 8 × 1024 = 262,144</strong></td>
+    <td><strong>76.3K</strong></td>
+    <td><strong>2.5s</strong></td>
+    <td><strong>2.2 days</strong> 🟢</td>
+  </tr>
+  <tr>
+    <td>8 nodes, FSDP</td>
+    <td>16× L40S</td>
+    <td>32 × 16 × 1024 = 524,288</td>
+    <td>38.1K</td>
+    <td>3.0s</td>
+    <td><strong>1.3 days</strong> 🟢</td>
+  </tr>
+</table>
+
+<div class="callout callout-info">
+  <strong>Key insight:</strong> FSDP on 8 GPUs (4 nodes) brings 1B training from 4 weeks → <strong>2.2 days</strong>. That's a <strong>12.8× speedup</strong> — and costs about the same as single-GPU training ($360 vs $300) because you pay for 8 GPUs but only for 2.2 days instead of 28.
+</div>
+
+<h2>Scenario C: 3B Model — The Stretch</h2>
+
+<p>3B model states = ~48 GB. Barely fits on 1 GPU with no room for activations. Needs FSDP at minimum.</p>
+
+<table>
+  <tr>
+    <th>Cluster (with FSDP)</th>
+    <th>GPUs</th>
+    <th>Per-GPU memory</th>
+    <th>Batch/GPU</th>
+    <th>Global batch</th>
+    <th>Steps (20B tokens)</th>
+    <th>Time</th>
+  </tr>
+  <tr>
+    <td>1 node, 2 GPUs (minimum)</td>
+    <td>2× L40S</td>
+    <td>~24 GB model states + ~15 GB activations = ~39 GB</td>
+    <td>8 seq</td>
+    <td>16 × 1024 = 16,384</td>
+    <td>1.22M</td>
+    <td><strong>~21 days</strong></td>
+  </tr>
+  <tr style="background: var(--table-stripe);">
+    <td><strong>2 nodes, 4 GPUs</strong></td>
+    <td><strong>4× L40S</strong></td>
+    <td><strong>~12 GB + ~15 GB = ~27 GB</strong></td>
+    <td><strong>8 seq</strong></td>
+    <td><strong>32 × 1024 = 32,768</strong></td>
+    <td><strong>610K</strong></td>
+    <td><strong>~10 days</strong> 🟡</td>
+  </tr>
+  <tr>
+    <td>4 nodes, 8 GPUs (FSDP)</td>
+    <td>8× L40S</td>
+    <td>~6 GB + ~20 GB = ~26 GB</td>
+    <td>16 seq</td>
+    <td>128 × 1024 = 131,072</td>
+    <td>152.6K</td>
+    <td><strong>~3 days</strong> 🟢</td>
+  </tr>
+  <tr>
+    <td>8 nodes, 16 GPUs (FSDP)</td>
+    <td>16× L40S</td>
+    <td>~3 GB + ~20 GB = ~23 GB</td>
+    <td>16 seq</td>
+    <td>256 × 1024 = 262,144</td>
+    <td>76.3K</td>
+    <td><strong>~1.5 days</strong> 🟢</td>
+  </tr>
+</table>
+
+<h2>Recommendation Matrix</h2>
+
+<table>
+  <tr>
+    <th>Goal</th>
+    <th>Model</th>
+    <th>Cluster</th>
+    <th>Time</th>
+    <th>Cost</th>
+    <th>Verdict</th>
+  </tr>
+  <tr>
+    <td>First working model</td>
+    <td>300M</td>
+    <td><strong>2 nodes (4 GPUs)</strong></td>
+    <td><strong>8 hours</strong></td>
+    <td>~$13</td>
+    <td>✅ Do this first</td>
+  </tr>
+  <tr>
+    <td>Production-quality</td>
+    <td>1B</td>
+    <td><strong>4 nodes (8 GPUs), FSDP</strong></td>
+    <td><strong>2.2 days</strong></td>
+    <td>~$360</td>
+    <td>✅ Best ROI</td>
+  </tr>
+  <tr>
+    <td>Stretch quality</td>
+    <td>3B</td>
+    <td>8 nodes (16 GPUs), FSDP</td>
+    <td>~1.5 days</td>
+    <td>~$700</td>
+    <td>⚠️ Only if 1B is insufficient</td>
+  </tr>
+</table>
+
+<h2>The Real Bottleneck: Not Training Time</h2>
+
+<p>After running the numbers, here's what I'd highlight:</p>
+
+<div class="callout callout-warning">
+  <p><strong>Training the 300M model on 2 nodes (4 GPUs) for 8 hours gives you a working diffusion LM.</strong> The question isn't "can I scale to more GPUs?" — it's "is the quality good enough for my use case?"</p>
+  <p>Before scaling to 1B/3B with a cluster, train the 300M model first. You'll learn:</p>
+  <ul>
+    <li>Does the masked diffusion algorithm actually work well for PT+EN+Code?</li>
+    <li>Is 32K vocab enough? Do you need more code-specific tokens?</li>
+    <li>What does 75-100M AR-equivalent quality feel like? Is it useful?</li>
+    <li>How fast is inference? How many diffusion steps do you need for good quality?</li>
+  </ul>
+  <p>The answers to these questions determine whether 1B/3B is worth scaling to — not the other way around.</p>
+</div>
+
+<h2>In Case Your Cloud Provider Has Slower Networking</h2>
+
+<table>
+  <tr>
+    <th>Interconnect</th>
+    <th>Bandwidth</th>
+    <th>Impact on 4-GPU training</th>
+    <th>Impact on 8-GPU training</th>
+  </tr>
+  <tr>
+    <td>100 Gbps Ethernet</td>
+    <td>~12 GB/s</td>
+    <td>3.1× speedup (near-ideal)</td>
+    <td>5.3× speedup (good)</td>
+  </tr>
+  <tr>
+    <td>25 Gbps Ethernet (budget)</td>
+    <td>~3 GB/s</td>
+    <td>2.8× speedup (still good)</td>
+    <td>3.5× speedup (communication-heavy)</td>
+  </tr>
+  <tr>
+    <td>10 Gbps Ethernet</td>
+    <td>~1.2 GB/s</td>
+    <td>2.0× speedup (bottlenecked)</td>
+    <td>2.2× speedup (barely gains from 4→8)</td>
+  </tr>
+</table>
+
+<p>Even at 25 Gbps (the most common budget cloud tier), you still get strong scaling up to 4 GPUs. The sweet spot shifts depending on your actual network.</p>
+
+<hr>
+<p><em>These estimates assume 40% MFU on L40S, which is achievable with well-optimized PyTorch + FlashAttention. Real numbers may vary ±20%.</em></p>
+
+</body>
+</html>

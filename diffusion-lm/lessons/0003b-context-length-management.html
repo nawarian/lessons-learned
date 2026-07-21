@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bridge Note: Context Length Management for Masked Diffusion LMs</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .compare-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    background: var(--blockquote-bg);
+  }
+  .card h3 { margin-top: 0; }
+  .card .card-tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+  .card .card-tag.mdm     { background: #dcfce7; color: #166534; }
+  .card .card-tag.ar      { background: #fef3c7; color: #92400e; }
+  .card .card-tag.ssm     { background: #dbeafe; color: #1e40af; }
+  .card .card-tag.hybrid  { background: #f3e8ff; color: #6b21a8; }
+  @media (prefers-color-scheme: dark) {
+    .card .card-tag.mdm    { background: #14532d; color: #bbf7d0; }
+    .card .card-tag.ar     { background: #451a03; color: #fde68a; }
+    .card .card-tag.ssm    { background: #1e3a5f; color: #bfdbfe; }
+    .card .card-tag.hybrid { background: #3b0764; color: #e9d5ff; }
+  }
+  .cost-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+  }
+  .cost-badge.low    { background: #dcfce7; color: #166534; }
+  .cost-badge.medium { background: #fef3c7; color: #92400e; }
+  .cost-badge.high   { background: #fee2e2; color: #991b1b; }
+  @media (prefers-color-scheme: dark) {
+    .cost-badge.low    { background: #14532d; color: #bbf7d0; }
+    .cost-badge.medium { background: #451a03; color: #fde68a; }
+    .cost-badge.high   { background: #7f1d1d; color: #fecaca; }
+  }
+  .arch-diagram {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 1rem 0;
+    padding: 0.75rem;
+    background: var(--code-bg);
+    border-radius: 6px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .lever-box {
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--blockquote-bg);
+    border-radius: 0 6px 6px 0;
+  }
+  .lever-box h3 { margin-top: 0; }
+  .rec-card {
+    border: 2px solid var(--success);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1.5rem 0;
+    background: var(--blockquote-bg);
+  }
+  .rec-card h3 { margin-top: 0; color: var(--success); }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Bridge: Context Length for Masked Diffusion LMs</h1>
+  <p class="lesson-meta">Practical reference for scaling MDLMs to long sequences · Prerequisites: Lesson 0003</p>
+  <nav class="lesson-nav">
+    <a href="0003-core-mechanics.html">← Core Mechanics</a>
+    <a href="0004-masked-diffusion.html">Next → Masked Diffusion</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — Pure masked diffusion LMs (MDLM, LLaDA) share the same O(L²) attention scaling problem as transformers during each pass, but multiply it by 64× (one pass per diffusion step). For 200K-token coding tasks, this makes them VRAM-prohibitive on your L40S and slower than AR models — <strong>unless</strong> you switch to an SSM backbone (DiffuMamba), sliding window attention, or a block-autoregressive hybrid. For learning and prototyping (lessons 0004–0005), we'll use short context (256–512 tokens) where pure MDLMs shine.
+</blockquote>
+
+<hr>
+
+<h2>Why Same Number of Passes ≠ Same VRAM</h2>
+
+<p>You called this out correctly. Let's be precise about <em>what</em> scales and <em>how much</em>.</p>
+
+<p>Each diffusion step runs <strong>one full forward pass</strong> through the model. The cost of that pass depends on sequence length L:</p>
+
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Scaling with L</th>
+    <th>What it is</th>
+  </tr>
+  <tr>
+    <td>Attention scores (naive)</td>
+    <td>O(L²) — materialized matrix</td>
+    <td>The L×L attention pattern — <strong>Flash Attention avoids materializing this</strong></td>
+  </tr>
+  <tr>
+    <td>Attention FLOPs (actual compute)</td>
+    <td>O(L²) — still happens</td>
+    <td>Every token must attend to every other token — the math is O(L²) regardless of Flash Attn</td>
+  </tr>
+  <tr>
+    <td>Activations (hidden states)</td>
+    <td>O(L × d_model × num_layers)</td>
+    <td>All intermediate values stored for backward pass — <strong>this is the VRAM bottleneck</strong></td>
+  </tr>
+  <tr>
+    <td>Embedding table lookup</td>
+    <td>O(L)</td>
+    <td>Negligible</td>
+  </tr>
+</table>
+
+<h3>Flash Attention: What It Fixes and What It Doesn't</h3>
+
+<p>Flash Attention tiles the attention computation so you never store the full L×L matrix in VRAM. It's essential for long sequences — but it only fixes the <strong>attention score memory</strong>, not the <strong>activation memory</strong> or the <strong>O(L²) FLOPs</strong>.</p>
+
+<div class="arch-diagram">VRAM breakdown for a single forward pass (8B model, BF16, batch_size=1):
+
+              L=512       L=8K       L=200K
+Weights       16 GB      16 GB       16 GB       ← constant
+Embedding     ~4 MB      ~64 MB      ~1.6 GB    ← negligible
+Activations   ~0.5 GB    ~2-4 GB     ~50-100 GB  ← ⚠️ bottleneck
+Attention     ~0 MB (Flash Attn never stores the full matrix)
+───────
+Total         ~16.5 GB   ~20 GB      ~68-118 GB  ← ❌ L40S only has 48 GB</pre></div>
+
+<p>At 200K context, you can't fit <strong>even a single forward pass</strong> of an 8B transformer MDLM in 48 GB VRAM — no matter how optimized. The activations alone eat 50-100 GB. And you need 64 such passes to generate.</p>
+
+<div class="callout callout-warning">
+  <strong>Important nuance:</strong> Activation checkpointing (gradient checkpointing) can reduce this during <em>training</em> by recomputing activations instead of storing them — but this trades memory for compute (~1.3× more FLOPs). At inference there's no backward pass, so you only store forward activations for the current step. But 50 GB of activations for a single forward pass is still over budget.
+</div>
+
+<hr>
+
+<h2>Why Training Context Length Matters for Inference</h2>
+
+<p>You also asked: <strong>"Must training already be prepared for longer contexts?"</strong> — and the answer is more nuanced than you might expect.</p>
+
+<h3>RoPE Extrapolation (The Hope)</h3>
+
+<p>Most MDLMs use RoPE (Rotary Position Embeddings), which supports <strong>length extrapolation</strong> — the ability to run inference at contexts longer than training. This is what lets LLaMA-3 (trained at 8K) run at 128K with techniques like NTK-aware scaling, YaRN, or dynamic NTK.</p>
+
+<p>The same techniques apply to MDLMs since they also use standard attention with RoPE. So a model trained at 4K can <em>probably</em> extrapolate to 8K-16K with modest quality loss.</p>
+
+<p><strong>But the extrapolation gap matters:</strong></p>
+<table>
+  <tr>
+    <th>Train → Infer</th>
+    <th>Likely outcome</th>
+    <th>Applies to MDLMs?</th>
+  </tr>
+  <tr>
+    <td>4K → 8K (2×)</td>
+    <td>✅ Minor perplexity increase, usable</td>
+    <td>Yes — LLaDA can do this</td>
+  </tr>
+  <tr>
+    <td>4K → 32K (8×)</td>
+    <td>🟡 Significant degradation, needs NTK tuning</td>
+    <td>Untested on diffusion LMs specifically</td>
+  </tr>
+  <tr>
+    <td>4K → 200K (50×)</td>
+    <td>❌ Garbage — too far from training distribution</td>
+    <td>No — RoPE extrapolation has limits</td>
+  </tr>
+</table>
+
+<p>To get 200K inference, you almost certainly need <strong>200K training</strong> (or at least 64K-128K with aggressive extrapolation). And training at 200K with a transformer backbone means paying the O(L²) attention cost for every training step — which is why nobody has done it with pure diffusion LMs yet.</p>
+
+<h3>The Training Cost Wall</h3>
+
+<p>LLaDA 8B trained at 4K context for ~130K H800 GPU-hours. To train the same model at 200K context:</p>
+
+<pre><code>Compute multiplier ≈ (200K / 4K)² × (data scaling factor)
+                   ≈ 2500 × ??? 
+
+Reality check: 130K GPU-hours × 2500 ≈ 325M GPU-hours
+                = 37,000 years on a single GPU
+                = 37 years on a 1000-GPU cluster</code></pre>
+
+<p>This is why there is no 200K-context pure diffusion LM. The training cost is two to three orders of magnitude beyond what's been attempted.</p>
+
+<hr>
+
+<h2>The Four Levers for Long-Context MDLMs</h2>
+
+<p>Each lever trades one property for another. Here's how they compare:</p>
+
+<div class="compare-cards">
+
+  <div class="card">
+    <div class="card-tag mdm">Lever 1</div>
+    <h3>🧱 Brute-Force Pretrain at Long Context</h3>
+    <p><strong>What:</strong> Train the full transformer MDLM at the target context length (e.g. 200K), relying on Flash Attention + sequence parallelism across GPUs.</p>
+    <p><strong>VRAM cost:</strong> <span class="cost-badge high">Very high</span></p>
+    <p><strong>Efficiency:</strong> O(L²) attention FLOPs per step <span class="cost-badge high">×</span> O(steps) for diffusion <span class="cost-badge high">= prohibitively expensive at scale</span></p>
+    <p><strong>Verdict:</strong> ❌ Infeasible on single GPU. Needs A100/H100 cluster with hundreds of GPUs and months of training. No published diffusion LM has attempted this beyond 4K tokens.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-tag mdm">Lever 2</div>
+    <h3>🔲 Sliding Window Attention</h3>
+    <p><strong>What:</strong> Each token only attends to W neighbours instead of all L tokens. Attention becomes O(L × W) instead of O(L²).</p>
+    <p><strong>VRAM cost:</strong> <span class="cost-badge medium">Moderate</span> — activations still O(L × d_model), but attention is now O(W) per token</p>
+    <p><strong>Efficiency:</strong> O(L × W) per step <span class="cost-badge medium">×</span> O(steps) = <strong>much more affordable at long context</strong></p>
+    <p><strong>Caveat:</strong> Loses long-range dependencies beyond window size W. Not ideal for code where a function definition 50K tokens ago needs to be referenced.</p>
+    <p><strong>Verdict:</strong> 🟡 Practical if your task is local (e.g., line-by-line completion). Global reasoning suffers.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-tag ssm">Lever 3</div>
+    <h3>⚡ SSM Backbone (Mamba / DiffuMamba)</h3>
+    <p><strong>What:</strong> Replace transformer attention with a State Space Model (Mamba). SSMs have O(L) complexity — constant per token regardless of total sequence length.</p>
+    <p><strong>VRAM cost:</strong> <span class="cost-badge low">Low</span> — no attention matrix, no KV-cache. Activations still O(L × d_model) but no O(L²) term.</p>
+    <p><strong>Efficiency:</strong> O(L) per step <span class="cost-badge low">×</span> O(steps) = <strong>best theoretical scaling for long context</strong></p>
+    <pre><code>Transformer at 200K:  200K² × 64 = 2.56T attention entries
+Mamba at 200K:         200K × 64 = 12.8M state updates
+Difference:            ≈ 200,000× fewer operations</code></pre>
+    <p><strong>Verdict:</strong> ✅ The architecture to watch. DiffuMamba paper claims 8.2× speedup at their tested lengths. At 200K the advantage would be much larger. <strong>Code not yet publicly released.</strong></p>
+  </div>
+
+  <div class="card">
+    <div class="card-tag hybrid">Lever 4</div>
+    <h3>🔗 Block-Autoregressive Diffusion</h3>
+    <p><strong>What:</strong> Generate text in blocks of e.g. 256 tokens via diffusion, then chain blocks AR-style. Each block diffuses in parallel internally, but blocks depend sequentially on previous ones. (DiffusionGemma's approach.)</p>
+    <p><strong>VRAM cost:</strong> <span class="cost-badge low">Low per block</span> — each block is short (256 tokens), fits easily. Cross-block context grows cumulatively.</p>
+    <p><strong>Efficiency:</strong> O(N_blocks) serial chain + O(block_size² × steps) per block</p>
+    <pre><code>200K output, 256-token blocks:
+  - 781 blocks chained sequentially
+  - Each block: 256² × 64 = 4.2M attention per block (trivial)
+  - Total: 781 serial steps × attention per block
+  - Serial steps: 781 — same wall-clock as AR</code></pre>
+    <p><strong>Verdict:</strong> 🟡 Works, but at 200K you pay 781 serial steps — same latency problem as AR, just with parallel generation inside each step. Good for very long outputs if latency isn't critical.</p>
+  </div>
+
+</div>
+
+<hr>
+
+<h2>Bottom Line for Your Use Cases</h2>
+
+<div class="rec-card">
+  <h3>🟢 For learning and prototyping (lessons 0004–0005)</h3>
+  <p><strong>Short context (256–512 tokens) on pure MDLM is perfect.</strong> It fits on your 8 GB local GPU, trains in minutes instead of days, and teaches you all the core mechanics. The principles transfer directly to larger contexts.</p>
+</div>
+
+<div class="rec-card">
+  <h3>🟡 For coding at 200K tokens with an MDLM</h3>
+  <p><strong>Today:</strong> Pure masked diffusion (transformer backbone) is not the right tool. Even with Flash Attention and quantization, 64 passes at 200K won't fit in 48 GB VRAM. An AR model with KV-cache optimizations will outperform it for this specific use case.</p>
+  <p><strong>Tomorrow (if DiffuMamba code is released):</strong> The SSM backbone changes the equation entirely. O(L) scaling × 64 diffusion steps is very feasible on your L40S at 200K. Worth watching.</p>
+</div>
+
+<div class="rec-card">
+  <h3>🟡 Block-AR hybrid as a workaround today</h3>
+  <p>If you wanted to build a long-context diffusion system <em>right now</em>, the block-autoregressive approach is your best bet. Each 256-token block fits easily on your L40S. The tradeoff: 781 serial steps for 200K output means ~same latency as AR.</p>
+</div>
+
+<hr>
+
+<h2>What This Means for the Remaining Lessons</h2>
+
+<table>
+  <tr>
+    <th>Lesson</th>
+    <th>Context Length</th>
+    <th>Hardware</th>
+    <th>Why this length</th>
+  </tr>
+  <tr>
+    <td>0004 (Masked Diffusion deep-dive)</td>
+    <td>Theory — any length</td>
+    <td>None needed</td>
+    <td>Understanding the algorithm</td>
+  </tr>
+  <tr>
+    <td>0005 (Hands-on: build a tiny MDLM)</td>
+    <td><strong>256 tokens</strong></td>
+    <td>8 GB local GPU</td>
+    <td>Fits in VRAM with room for batch size; trains fast enough for experimentation</td>
+  </tr>
+  <tr>
+    <td>0006 (At Scale)</td>
+    <td>Discuss all lengths</td>
+    <td>None needed</td>
+    <td>Compare DiffusionGemma, DiffuMamba, LLaDA context strategies</td>
+  </tr>
+  <tr>
+    <td>0007 (Build Decision)</td>
+    <td>Your choice</td>
+    <td>L40S</td>
+    <td>Match architecture to your context needs</td>
+  </tr>
+</table>
+
+<p><em>Still have questions about context length for a specific task? Ask — the answer depends a lot on whether you need global attention across 200K tokens or can get away with local windows or SSM-based approaches.</em></p>
+
+<nav class="lesson-nav">
+  <a href="0003-core-mechanics.html">← Core Mechanics</a>
+  <a href="0004-masked-diffusion.html">Next → Masked Diffusion</a>
+</nav>
+
+</body>
+</html>

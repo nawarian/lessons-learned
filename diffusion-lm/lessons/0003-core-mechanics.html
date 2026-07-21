@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0003: Core Mechanics — Forward, Reverse, and the Discrete Problem</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  /* Diffusion visualization styles */
+  .vis-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--blockquote-bg);
+  }
+  .vis-container canvas {
+    width: 100%;
+    max-width: 640px;
+    height: 160px;
+    border-radius: 6px;
+    background: #fff;
+    border: 1px solid var(--border);
+  }
+  @media (prefers-color-scheme: dark) {
+    .vis-container canvas { background: #111; }
+  }
+  .vis-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: center;
+  }
+  .vis-controls label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+  }
+  .vis-controls input[type="range"] {
+    width: 120px;
+  }
+  .vis-controls button {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  .vis-controls button:hover { background: var(--code-bg); }
+  .vis-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .vis-label {
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    text-align: center;
+  }
+  .step-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* Family comparison cards */
+  .family-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .family-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    background: var(--blockquote-bg);
+  }
+  .family-card h3 { margin-top: 0; }
+  .family-card .tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+  .tag.continuous { background: #dbeafe; color: #1e40af; }
+  .tag.discrete   { background: #fef3c7; color: #92400e; }
+  .tag.masked     { background: #dcfce7; color: #166534; }
+  @media (prefers-color-scheme: dark) {
+    .tag.continuous { background: #1e3a5f; color: #bfdbfe; }
+    .tag.discrete   { background: #451a03; color: #fde68a; }
+    .tag.masked     { background: #14532d; color: #bbf7d0; }
+  }
+
+  .arch-diagram {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 1rem 0;
+    padding: 0.75rem;
+    background: var(--code-bg);
+    border-radius: 6px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  /* Process step callout */
+  .process-step {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    border-left: 3px solid var(--accent);
+    background: var(--blockquote-bg);
+    border-radius: 0 6px 6px 0;
+  }
+  .process-step .num {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 1.5rem;
+  }
+
+  /* Horizontal 3-column layout for the families */
+  @media (min-width: 600px) {
+    .family-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+    }
+    .family-card { margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Lesson 0003: Core Mechanics</h1>
+  <p class="lesson-meta">Estimated time: 30 min · Prerequisites: Lessons 0001, 0002 · Hardware: none required</p>
+  <nav class="lesson-nav">
+    <a href="0002b-context-prompting-output-length.html">← Bridge Note</a>
+    <span><a href="0003b-context-length-management.html">☰ Context Length →</a> · <a href="0004-masked-diffusion.html">Next → Masked Diffusion</a></span>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — Diffusion models work by taking clean data, gradually destroying it (forward process), then learning to reverse that destruction (reverse process). For text this is hard because tokens are discrete — you can't "add a little bit of noise" to a word the way you can to a pixel. There are three families of solutions: diffuse in continuous embedding space, transition between discrete tokens, or mask tokens away. Each has different tradeoffs.
+</blockquote>
+
+<h2>The Intuition: Image Diffusion First</h2>
+
+<p>Before we touch text, let's build intuition with something visual. Here's how diffusion works for images:</p>
+
+<div class="process-step">
+  <div class="num">①</div>
+  <div><strong>Forward pass</strong> — Take a photo and gradually add Gaussian noise over many steps (e.g., 1000 steps). At step 0 the image is clear. At step 1000 it's pure random noise. Each step adds a tiny bit more noise according to a <em>variance schedule</em>.</div>
+</div>
+<div class="process-step">
+  <div class="num">②</div>
+  <div><strong>Reverse pass</strong> — Train a neural network to predict the noise added at each step, given the noisy image and the step number. Starting from pure noise, the network gradually removes noise step by step, recovering the original image.</div>
+</div>
+<div class="process-step">
+  <div class="num">③</div>
+  <div><strong>Generation</strong> — Once trained, you can sample: start with pure noise (or a random seed), run the reverse process for all steps, and watch a plausible image emerge from nothing.</div>
+</div>
+
+<div class="arch-diagram">                Forward (fixed, no training)
+  Clean image ──→ x₀ → x₁ → x₂ → ... → x_T (pure noise)
+                     ↑     ↑            ↑
+                  ε ∼ N(0,I) per step   (you control how much noise per step)
+
+  Reverse (learned by neural network θ)
+  Pure noise  ──→ x_T → x_{T-1} → ... → x₀ (generated image)
+                     ↑
+                  p_θ(x_{t-1} | x_t, t)  predicted by model
+</div>
+
+<div class="callout callout-info">
+  <strong>Key insight for later:</strong> In image diffusion, the forward process is <em>fixed</em> — you just add noise according to a simple formula. You never train the forward process. The neural network only learns the <em>reverse</em> direction. This means training data is cheap: take any image, add noise at a random timestep, and ask the network to predict the noise. Each image generates infinite training examples at different noise levels.
+</div>
+
+<h2>Interactive: Forward + Reverse Diffusion (Visual)</h2>
+
+<p>Use the canvas below to watch how diffusion works on a simple 2D point cloud. Drag the slider to control the noise timestep, then hit "Reverse" to watch the model denoise step by step.</p>
+
+<div class="vis-container">
+  <canvas id="diffusionCanvas" width="640" height="160"></canvas>
+  <div class="vis-label" id="visLabel">Step 0 — Clean data</div>
+  <div class="vis-controls">
+    <label>Timestep:
+      <input type="range" id="timestepSlider" min="0" max="20" value="0" step="1">
+      <span id="stepDisplay">0</span>
+    </label>
+    <button id="forwardBtn">▶ Forward</button>
+    <button id="reverseBtn">◀ Reverse</button>
+    <button id="resetVisBtn">Reset</button>
+    <label>
+      <input type="checkbox" id="showArrows" checked> Show arrows
+    </label>
+  </div>
+  <div class="vis-label" style="font-size:0.75rem;">
+    Each dot = a data point (word embedding position conceptualized in 2D). Forward adds noise, scatter grows.
+    Reverse condenses back toward the original structure.
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('diffusionCanvas');
+  const ctx = canvas.getContext('2d');
+  const slider = document.getElementById('timestepSlider');
+  const stepDisplay = document.getElementById('stepDisplay');
+  const visLabel = document.getElementById('visLabel');
+  const forwardBtn = document.getElementById('forwardBtn');
+  const reverseBtn = document.getElementById('reverseBtn');
+  const resetBtn = document.getElementById('resetVisBtn');
+  const showArrows = document.getElementById('showArrows');
+
+  const MAX_STEPS = 20;
+  const POINTS = 30;
+
+  // Store original positions — a cluster of points in two groups
+  const original = [];
+  for (let i = 0; i < POINTS; i++) {
+    const group = i < POINTS / 2 ? 0 : 1;
+    const cx = group === 0 ? 180 : 460;
+    const cy = 80;
+    original.push({
+      x: cx + (Math.random() - 0.5) * 40,
+      y: cy + (Math.random() - 0.5) * 40,
+      group: group
+    });
+  }
+
+  // Current noisy positions
+  let current = original.map(p => ({...p}));
+  let currentStep = 0;
+  let animId = null;
+
+  function gaussianRand() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+
+  function noiseScale(step) {
+    // Noise grows non-linearly — slow at first, then faster
+    return (step / MAX_STEPS) * 1.6 + (step / MAX_STEPS) ** 2 * 2.0;
+  }
+
+  function applyForward(step) {
+    const scale = noiseScale(step);
+    current = original.map(p => ({
+      x: p.x + gaussianRand() * scale,
+      y: p.y + gaussianRand() * scale,
+      group: p.group
+    }));
+    currentStep = step;
+  }
+
+  function applyReverse(step) {
+    // Reverse is approximate — we can only partially undo
+    // Simulates what a learned model would do
+    const forwardScale = noiseScale(MAX_STEPS);
+    const currentScale = noiseScale(step);
+    const reversion = 1 - (currentScale / forwardScale) * 0.85;
+    current = original.map((p, i) => ({
+      x: p.x + (current[i].x - p.x) * reversion,
+      y: p.y + (current[i].y - p.y) * reversion,
+      group: p.group
+    }));
+    currentStep = step;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, 640, 160);
+
+    // Draw original ghost positions (faint) for reference
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#888';
+    for (const p of original) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Draw arrows from original to current
+    if (showArrows.checked && currentStep > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < original.length; i++) {
+        ctx.beginPath();
+        ctx.moveTo(original[i].x, original[i].y);
+        ctx.lineTo(current[i].x, current[i].y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Draw current points
+    for (const p of current) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      if (p.group === 0) {
+        ctx.fillStyle = '#2563eb';
+      } else {
+        ctx.fillStyle = '#16a34a';
+      }
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Label clusters
+    ctx.fillStyle = '#888';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    if (currentStep <= 5) {
+      ctx.fillText('Cluster A', 180, 148);
+      ctx.fillText('Cluster B', 460, 148);
+    }
+  }
+
+  function update(step) {
+    step = Math.max(0, Math.min(MAX_STEPS, step));
+    slider.value = step;
+    stepDisplay.textContent = step;
+    if (step === 0) {
+      current = original.map(p => ({...p}));
+      visLabel.textContent = 'Step 0 — Clean data (original structure)';
+    } else {
+      applyForward(step);
+      visLabel.textContent = `Step ${step} — Noise scale: ${noiseScale(step).toFixed(1)}`;
+    }
+    currentStep = step;
+    draw();
+  }
+
+  slider.addEventListener('input', () => {
+    if (animId) { cancelAnimationFrame(animId); animId = null; }
+    const step = parseInt(slider.value);
+    update(step);
+  });
+
+  forwardBtn.addEventListener('click', () => {
+    if (animId) return;
+    function stepFwd() {
+      const s = parseInt(slider.value);
+      if (s >= MAX_STEPS) { animId = null; return; }
+      update(s + 1);
+      animId = setTimeout(stepFwd, 100);
+    }
+    stepFwd();
+  });
+
+  reverseBtn.addEventListener('click', () => {
+    if (animId) return;
+    function stepRev() {
+      const s = parseInt(slider.value);
+      if (s <= 0) { animId = null; return; }
+      // For reverse, we simulate the learned denoising
+      // by moving points back toward original with some residual noise
+      const newStep = s - 1;
+      const forwardScale = noiseScale(MAX_STEPS);
+      const newScale = noiseScale(newStep);
+      const reversion = 1 - (newScale / forwardScale) * 0.85;
+      current = original.map((p, i) => ({
+        x: p.x + (current[i].x - p.x) * (reversion / (1 - (1 - reversion))),
+        y: p.y + (current[i].y - p.y) * (reversion / (1 - (1 - reversion))),
+        group: p.group
+      }));
+      currentStep = newStep;
+      slider.value = newStep;
+      stepDisplay.textContent = newStep;
+      visLabel.textContent = `Step ${newStep} — Denoising...`;
+      draw();
+      animId = setTimeout(stepRev, 120);
+    }
+    stepRev();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    if (animId) { clearTimeout(animId); animId = null; }
+    update(0);
+  });
+
+  // Initial draw
+  update(0);
+})();
+</script>
+
+<hr>
+
+<h2>Why Text Breaks the Image Intuition</h2>
+
+<p>Image diffusion works because you can add <em>continuous</em> noise (Gaussian) to pixel values. A pixel at value 0.7 can become 0.72 with a tiny noise addition. The noise is <em>differentiable</em> — small changes in input produce small changes in output, which is exactly what gradient descent needs.</p>
+
+<p><strong>Text tokens are categorical, not continuous.</strong> The token "gato" is token ID 1234. What's "gato + 0.02 × noise"? It doesn't make sense. You can't add 2% noise to a token the way you add 2% noise to a pixel. The space of tokens has no geometry — you can't interpolate between "cachorro" and "gato".</p>
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Image Diffusion</th>
+    <th>Text Diffusion</th>
+  </tr>
+  <tr>
+    <td>Data type</td>
+    <td>Continuous (pixel ∈ [0, 1])</td>
+    <td><strong>Discrete</strong> (tokens ∈ {1, 2, ..., V})</td>
+  </tr>
+  <tr>
+    <td>Noise type</td>
+    <td>Gaussian (additive, continuous)</td>
+    <td><strong>???</strong> — Can't add to a token</td>
+  </tr>
+  <tr>
+    <td>Forward process</td>
+    <td>x_{t} = √(α_t) x₀ + √(1-α_t) ε</td>
+    <td><strong>Depends on the family</strong> (see below)</td>
+  </tr>
+  <tr>
+    <td>Loss</td>
+    <td>‖ε - ε_θ(x_t, t)‖² (MSE on noise)</td>
+    <td><strong>Cross-entropy</strong> on predicted tokens</td>
+  </tr>
+  <tr>
+    <td>Training data</td>
+    <td>Infinite (any noise level)</td>
+    <td>Infinite (any masking/corruption level)</td>
+  </tr>
+</table>
+
+<div class="callout callout-warning">
+  <strong>This is the core challenge.</strong> Every diffusion LM approach is fundamentally a solution to the question: <em>"How do I define a 'forward noising process' on discrete tokens that the model can learn to reverse?"</em> The answer defines the architecture.
+</div>
+
+<h2>The Three Solution Families</h2>
+
+<p>Researchers have converged on three main strategies. Each makes a different tradeoff between theoretical elegance, training cost, and practical implementability.</p>
+
+<div class="family-cards">
+
+  <div class="family-card">
+    <div class="tag continuous">⚡ Continuous Embedding Space</div>
+    <h3>Diffusion-LM</h3>
+    <p><strong>The idea:</strong> Don't diffuse the tokens themselves. Instead, embed each token into a continuous vector (ℝ<sup>d</sup>), then apply standard Gaussian diffusion in that embedding space. After denoising, project back to the nearest token.</p>
+    <p><strong>Like:</strong> Image diffusion, but on word embeddings instead of pixels.</p>
+    <p><strong>Downside:</strong> The round-trip (embed → noise → denoise → nearest token) introduces rounding errors. There's no guarantee the denoised embedding corresponds to a valid token.</p>
+    <p><strong>Paper:</strong> <a href="https://arxiv.org/abs/2205.14217">Diffusion-LM (Li et al., 2022)</a></p>
+    <p><strong>Cost note:</strong> <span class="step-badge">moderate</span> Standard transformer + embedding layer. Training cost similar to AR of same size, but inference requires many steps.</p>
+  </div>
+
+  <div class="family-card">
+    <div class="tag discrete">🔀 Discrete Token Transitions</div>
+    <h3>D3PM / SEDD</h3>
+    <p><strong>The idea:</strong> Define a transition matrix Q_t that governs how tokens change into other tokens over time. At each forward step, a token either stays the same or flips to another token according to Q_t. The reverse process learns to undo these transitions.</p>
+    <p><strong>Like:</strong> A Markov chain on the vocabulary. Each token has a probability of mutating into any other token, controlled by the timestep.</p>
+    <p><strong>Downside:</strong> The transition matrix is |V| × |V| (vocabulary size squared). For a 50K vocabulary that's 2.5B entries — you need clever parameterization (e.g., uniform transitions). Training is also more complex than the masked approach.</p>
+    <p><strong>Papers:</strong> <a href="https://arxiv.org/abs/2107.03006">D3PM (Austin et al., 2021)</a>, <a href="https://arxiv.org/abs/2310.16834">SEDD (Lou et al., 2024)</a></p>
+    <p><strong>Cost note:</strong> <span class="step-badge">higher</span> More complex loss (score entropy vs simple cross-entropy). SEDD medium (320M) requires 8× A100s for days.</p>
+  </div>
+
+  <div class="family-card">
+    <div class="tag masked">⬜ Masked Diffusion</div>
+    <h3>MDLM / LLaDA</h3>
+    <p><strong>The idea:</strong> The forward process gradually replaces tokens with a special [MASK] token. At step 0, all tokens are revealed. At step T, all tokens are [MASK]. The model learns to predict the original tokens from the masked version.</p>
+    <p><strong>Like:</strong> BERT's masked language model, but applied iteratively with a noise schedule instead of a single pass.</p>
+    <p><strong>Downside:</strong> Simpler than D3PM, but the [MASK] token carries no information — once masked, all identity is lost. Compare to discrete transitions where a token might mutate to a "similar" token, carrying some signal.</p>
+    <p><strong>Papers:</strong> <a href="https://arxiv.org/abs/2406.07524">MDLM (Sahoo et al., 2024)</a>, <a href="https://arxiv.org/abs/2502.09992">LLaDA (2025)</a></p>
+    <p><strong>Cost note:</strong> <span class="step-badge">lower</span> <strong>This is the practical starting point.</strong> Simple objective (cross-entropy on masked tokens). MDLM's code runs on a single GPU. Lesson 0004 covers this in depth, and Lesson 0005 builds one from scratch.</p>
+  </div>
+
+</div>
+
+<h2>Comparing the Forward Processes</h2>
+
+<table>
+  <tr>
+    <th>Family</th>
+    <th>Forward direction (t=0 → t=T)</th>
+    <th>What the model predicts</th>
+    <th>Loss function</th>
+  </tr>
+  <tr>
+    <td><strong>Continuous</strong> (Diffusion-LM)</td>
+    <td>Embedding vector → add Gaussian noise → pure noise vector</td>
+    <td>The noise ε added</td>
+    <td>MSE ‖ε - ε_θ‖²</td>
+  </tr>
+  <tr>
+    <td><strong>Discrete transitions</strong> (D3PM/SEDD)</td>
+    <td>Token ID → random transition via Q_t → uniform or absorbing state</td>
+    <td>The original token distribution (or the "score" / ratio)</td>
+    <td>Cross-entropy or score entropy</td>
+  </tr>
+  <tr>
+    <td><strong>Masked</strong> (MDLM/LLaDA)</td>
+    <td>Token → either stays same or becomes [MASK] → all [MASK]</td>
+    <td>The original token from the masked context</td>
+    <td>Cross-entropy on masked positions</td>
+  </tr>
+</table>
+
+<div class="arch-diagram">Visual comparison of forward processes on the sentence "The cat sat."
+
+                     t=0              t=T/2                t=T
+  Continuous:    [0.3, -0.1, ...] → [0.1, 0.4, ...] → [2.1, -0.8, ...]
+                 (embedding vec)    (noisy vec)        (pure noise vec)
+
+  Discrete:      [The] [cat] [sat] → [The] [dog] [ran] → [zqx] [kmp] [abc]
+                 (tokens)            (random flips)     (uniform random tokens)
+
+  Masked:        [The] [cat] [sat] → [The] [MASK] [sat] → [MASK] [MASK] [MASK]
+                 (tokens)            (some masked)       (all masked)
+</div>
+
+<h2>The Training Loop (Any Family)</h2>
+
+<p>Despite the differences, all three families share the same training structure:</p>
+
+<ol>
+  <li><strong>Sample</strong> a random timestep t ∈ [0, T]</li>
+  <li><strong>Corrupt</strong> the input according to the forward process at timestep t (add noise, transition, or mask)</li>
+  <li><strong>Predict</strong> the reverse: feed the corrupted input + timestep t into the neural network, and ask it to predict the clean version (original tokens or noise)</li>
+  <li><strong>Compute loss</strong> (cross-entropy or MSE) against the ground truth</li>
+  <li><strong>Backpropagate</strong> gradients through the network</li>
+  <li><strong>Repeat</strong> for millions of steps</li>
+</ol>
+
+<pre><code># Pseudocode — identical structure regardless of family
+for batch in dataloader:
+    x_0 = batch.tokens                     # Clean input (shape: [B, L])
+    t = random_timesteps(B)                # Random timesteps per sample
+
+    # Forward process (no training — fixed formula)
+    x_t = corrupt(x_0, t)                  # Depends on family
+
+    # Neural network predicts the reverse
+    prediction = model(x_t, t)             # model: noise_predictor or token_predictor
+
+    # Loss depends on what the model predicts
+    if family == 'continuous':
+        loss = mse(prediction, noise)      # Predict the noise
+    elif family == 'masked':
+        loss = cross_entropy(prediction, x_0[masked_positions])
+    elif family == 'discrete':
+        loss = score_entropy(prediction, x_0, x_t)
+
+    loss.backward()                        # ← This is where the 16× compute gap comes from
+    optimizer.step()</code></pre>
+
+<div class="callout callout-info">
+  <strong>Why diffusion training is more expensive (deeper explanation):</strong>
+  In AR training, every token in the sequence serves as both input and target simultaneously
+  (teacher forcing). A 1024-token sequence gives you 1024 training signals from one forward pass.
+  In diffusion training, a 1024-token sequence at noise level t gives you only the signal at
+  that specific noise level — you need to show the model many different noise levels to teach it
+  the full denoising trajectory. Hence the 16× compute multiplier (SMDM).
+</div>
+
+<h2>The Sampling Process (Inference)</h2>
+
+<p>Once trained, sampling works like this:</p>
+
+<ol>
+  <li><strong>Initialize</strong> a canvas of length L with pure noise / all [MASK] / random tokens (depending on family)</li>
+  <li><strong>For t = T down to 1:</strong>
+    <ul>
+      <li>Feed the current state x_t into the model</li>
+      <li>Get the model's prediction of the clean data</li>
+      <li>Partially denoise: compute x_{t-1} from x_t and the prediction, using the known noise schedule</li>
+    </ul>
+  </li>
+  <li><strong>Return</strong> x₀ — the final denoised sequence</li>
+</ol>
+
+<p>The number of steps T is a free parameter you set at inference time. More steps = better quality (but more compute). Fewer steps = faster generation (but lower quality). This is the <strong>compute-quality tradeoff</strong> that makes diffusion LMs unique.</p>
+
+<div class="callout callout-success">
+  <strong>Key advantage over AR:</strong> In AR inference, you <em>must</em> do L steps. In diffusion inference, you choose how many steps to take — and it's independent of L. A 128-step diffusion generates 128 tokens or 8192 tokens in the same number of passes.
+</div>
+
+<h2>Hardware Cost Summary</h2>
+
+<table>
+  <tr>
+    <th>Family</th>
+    <th>Training</th>
+    <th>Inference (64 steps, 1024 tokens)</th>
+    <th>Best for your L40S?</th>
+  </tr>
+  <tr>
+    <td>Continuous (Diffusion-LM)</td>
+    <td>Moderate — standard transformer + embedding</td>
+    <td>64 full attention passes</td>
+    <td>🟡 Legacy approach; newer methods are simpler</td>
+  </tr>
+  <tr>
+    <td>Discrete (D3PM / SEDD)</td>
+    <td>Higher — complex loss, full |V| transitions</td>
+    <td>Varies (depends on number of steps)</td>
+    <td>🔴 Hardest to implement; best for theory research</td>
+  </tr>
+  <tr>
+    <td>Masked (MDLM / LLaDA)</td>
+    <td><strong>Simplest</strong> — cross-entropy, easy to implement</td>
+    <td>64 full attention passes (same as others)</td>
+    <td><strong>🟢 Best starting point</strong> — we'll build this in Lesson 0005</td>
+  </tr>
+</table>
+
+<h2>Quiz: Check Your Understanding</h2>
+
+<div class="quiz" id="quiz1">
+  <div class="quiz-question">1. Why can't we apply image-style Gaussian diffusion directly to text tokens?</div>
+  <div class="quiz-options" id="q1opts">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      <span>Tokens are too long — Gaussian noise would exceed the context window</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      <span>Tokens are discrete categories, not continuous values — you can't "add noise" to token ID 1234</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      <span>Gaussian noise doesn't exist in PyTorch implementations of token embeddings</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      <span>You can apply it, but the loss function doesn't converge for categorical data</span>
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q1fb"></div>
+</div>
+
+<div class="quiz" id="quiz2">
+  <div class="quiz-question">2. What do all three diffusion families (continuous, discrete, masked) share?</div>
+  <div class="quiz-options" id="q2opts">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      <span>They all use the same loss function (MSE)</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      <span>They all corrupt data forward (fixed schedule) and learn to reverse it (learned network)</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      <span>They all require a vocabulary of at least 50K tokens</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      <span>They all use the same [MASK] token in the forward process</span>
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q2fb"></div>
+</div>
+
+<div class="quiz" id="quiz3">
+  <div class="quiz-question">3. Which family is the most practical starting point for building your own diffusion LM on a single GPU?</div>
+  <div class="quiz-options" id="q3opts">
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="a">
+      <span>Continuous embedding space (Diffusion-LM) — most similar to image diffusion</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="b">
+      <span>Discrete token transitions (D3PM/SEDD) — most theoretically rigorous</span>
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="c">
+      <span>Masked diffusion (MDLM/LLaDA) — simplest loss, easiest to implement</span>
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q3fb"></div>
+</div>
+
+<script>
+(function() {
+  const quizzes = [
+    {
+      name: 'q1',
+      answer: 'b',
+      correct: '✅ Correct! Token IDs are discrete categories with no continuous geometry. You can\'t interpolate between "cat" and "dog" the way you can between pixel values 0.7 and 0.72.',
+      wrong: '❌ Not quite. Think about what "adding noise" means for a category label — most answers to this question misunderstand the fundamental discrete vs continuous barrier.'
+    },
+    {
+      name: 'q2',
+      answer: 'b',
+      correct: '✅ Right! All three families share the same high-level structure: a fixed forward corruption process and a learned reverse denoising process. They differ in <em>how</em> they corrupt and <em>what</em> the network predicts.',
+      wrong: '❌ Look for the structural commonality that defines <em>diffusion</em> as a class — what makes something a diffusion model vs something else?'
+    },
+    {
+      name: 'q3',
+      answer: 'c',
+      correct: '✅ Yes! Masked diffusion uses simple cross-entropy loss, the code is released and runs on single GPUs, and models like LLaDA 8B run on your L40S. Lesson 0004 explains it in depth.',
+      wrong: '❌ Consider which approach has the simplest implementation, the lowest barrier to entry, and code that already runs on consumer GPUs.'
+    }
+  ];
+
+  quizzes.forEach(q => {
+    const opts = document.getElementById(q.name + 'opts');
+    const fb = document.getElementById(q.name + 'fb');
+    const radios = opts.querySelectorAll('input[type="radio"]');
+
+    radios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        // Reset all options
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        // Find selected option
+        const selected = radio.closest('.quiz-option');
+        if (radio.value === q.answer) {
+          selected.classList.add('correct');
+          fb.innerHTML = q.correct;
+        } else {
+          selected.classList.add('wrong');
+          fb.innerHTML = q.wrong;
+        }
+        fb.classList.add('show');
+      });
+    });
+  });
+})();
+</script>
+
+<h2>What's Next</h2>
+
+<p>You now understand the core problem (discrete tokens) and the three solution families. Lesson 0004 will dive deep into <strong>masked diffusion</strong> — the practical approach we'll use to build your first diffusion LM in Lesson 0005.</p>
+
+<div class="callout callout-info">
+  <strong>Recommended reading before Lesson 0004:</strong>
+  <ul>
+    <li><a href="https://arxiv.org/abs/2406.07524">MDLM paper</a> — focus on the Introduction and Method sections (skip the math-heavy proofs on first read)</li>
+    <li>Or just wait — Lesson 0004 explains the algorithm step by step</li>
+  </ul>
+</div>
+
+<h2>Primary Sources for This Lesson</h2>
+<ul>
+  <li><a href="https://arxiv.org/abs/2205.14217">Diffusion-LM Improves Controllable Text Generation</a> — Continuous embedding approach</li>
+  <li><a href="https://arxiv.org/abs/2107.03006">D3PM: Structured Denoising Diffusion Models in Discrete State-Spaces</a> — Discrete transitions</li>
+  <li><a href="https://arxiv.org/abs/2310.16834">SEDD: Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution</a> — ICML 2024 Best Paper</li>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM: Simple and Effective Masked Diffusion Language Models</a> — Our practical starting point</li>
+  <li><a href="https://arxiv.org/abs/2502.09992">LLaDA: Large Language Diffusion Models</a> — Masked diffusion at scale</li>
+</ul>
+
+<nav class="lesson-nav">
+  <a href="0002b-context-prompting-output-length.html">← Bridge Note</a>
+  <a href="0004-masked-diffusion.html">Next → Masked Diffusion</a>
+</nav>
+
+</body>
+</html>
