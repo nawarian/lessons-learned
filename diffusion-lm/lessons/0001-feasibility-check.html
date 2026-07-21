@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0001: Feasibility Check — Can You Build a Diffusion LM?</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>Lesson 0001: Feasibility Check</h1>
+  <p class="lesson-meta">Estimated time: 20 min · Prerequisites: none · Hardware: none required</p>
+  <nav class="lesson-nav">
+    <span>← (first lesson)</span>
+    <a href="0002-why-not-autoregressive.html">Next → Why Not Autoregressive?</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>Why this lesson first?</strong> You asked to know if this mountain is climbable before buying boots. I'll give you straight numbers: what it costs to train, what it costs to run, and what's realistic on your L40S. After this, you decide whether to continue.
+</blockquote>
+
+<h2>The Short Answer</h2>
+
+<p><strong>Yes, diffusion LMs are worth your time — but you need to pick your battles carefully.</strong></p>
+
+<p>Here's the summary, then the details:</p>
+
+<table>
+  <tr>
+    <th>Activity</th>
+    <th>Fits your L40S?</th>
+    <th>Fits your 8 GB local?</th>
+  </tr>
+  <tr>
+    <td>Train a tiny diffusion LM (100M params)</td>
+    <td>✅ Easily</td>
+    <td>✅ Yes (4–6 GB VRAM)</td>
+  </tr>
+  <tr>
+    <td>Train a 1B diffusion LM</td>
+    <td>✅ Likely (24–32 GB VRAM estimate)</td>
+    <td>❌ No</td>
+  </tr>
+  <tr>
+    <td>Run LLaDA 8B (4-bit quantized)</td>
+    <td>✅ Comfortably (~6 GB)</td>
+    <td>✅ Yes (~6 GB)</td>
+  </tr>
+  <tr>
+    <td>Run LLaDA 8B (BF16)</td>
+    <td>✅ Yes (~16 GB)</td>
+    <td>❌ No</td>
+  </tr>
+  <tr>
+    <td>Run DiffusionGemma 26B (4-bit)</td>
+    <td>✅ Yes (~13 GB)</td>
+    <td>❌ No</td>
+  </tr>
+  <tr>
+    <td>Run DiffusionGemma 26B (BF16)</td>
+    <td>❌ Needs A100 80GB</td>
+    <td>❌ No</td>
+  </tr>
+  <tr>
+    <td>Train something SOTA from scratch</td>
+    <td>❌ Needs cluster</td>
+    <td>❌ No</td>
+  </tr>
+</table>
+
+<p>Diffusion LMs use <strong>16× more compute than ARMs during training</strong> at the same loss (per the SMDM scaling law paper). That sounds terrible — and it is, for training. <strong>But inference is where they shine</strong>: 1.4× faster sampling than equivalent ARMs, no KV-cache, and a tunable compute-quality tradeoff.</p>
+
+<p>The question isn't "can I train SOTA from scratch?" — <strong>you can't, and shouldn't try</strong> on a single GPU. The question is "can I experiment, fine-tune, adapt, and run inference?" — and the answer there is <strong>yes</strong>.</p>
+
+<h2>1. Training Costs: The Numbers</h2>
+
+<p>Let's be precise. Here's what existing diffusion LMs cost to train:</p>
+
+<table>
+  <tr>
+    <th>Model</th>
+    <th>Params</th>
+    <th>Training Data</th>
+    <th>Hardware</th>
+    <th>GPU-Hours</th>
+  </tr>
+  <tr>
+    <td>MDLM (base)</td>
+    <td>~110M</td>
+    <td>33B tokens (LM1B)</td>
+    <td>Not reported (likely 4–8× A100)</td>
+    <td>~hours on multi-GPU</td>
+  </tr>
+  <tr>
+    <td>SEDD (small)</td>
+    <td>~90M</td>
+    <td>One Billion Words dataset</td>
+    <td>4–8× A100</td>
+    <td>~hours</td>
+  </tr>
+  <tr>
+    <td>SEDD (medium)</td>
+    <td>~320M</td>
+    <td>OpenWebText</td>
+    <td>8× A100 80GB</td>
+    <td>~days</td>
+  </tr>
+  <tr>
+    <td><strong>LLaDA 8B</strong></td>
+    <td><strong>8B</strong></td>
+    <td><strong>2.3T tokens</strong></td>
+    <td><strong>H800 cluster</strong></td>
+    <td><strong>130,000</strong></td>
+  </tr>
+  <tr>
+    <td>SMDM 1.1B</td>
+    <td>1.1B</td>
+    <td>~540B tokens (SlimPajama)</td>
+    <td>Multi-GPU (TinyLlama infra)</td>
+    <td>~thousands</td>
+  </tr>
+</table>
+
+<p class="callout callout-warning"><strong>Reality check:</strong> LLaDA 8B cost <strong>130,000 H800 GPU-hours</strong>. An L40S is roughly equivalent to an A100 in compute. 130,000 GPU-hours ÷ 1 GPU = <strong>5,417 days = 14.8 years</strong>. You cannot train an 8B diffusion LM from scratch on a single GPU. No surprises there — you can't train an 8B ARM from scratch either.</p>
+
+<h3>Why Diffusion Training is More Expensive</h3>
+
+<p>The SMDM paper found that <strong>masked diffusion models need 16× more compute than autoregressive models</strong> to reach the same validation loss. This isn't a bug — it's the nature of the beast:</p>
+
+<ul>
+  <li><strong>AR training</strong>: each token predicts the next on one forward pass. Every token is used exactly once.</li>
+  <li><strong>Diffusion training</strong>: you repeatedly corrupt and reconstruct the same sequence at different noise levels. Each training step only teaches the model a small piece of the denoising task.</li>
+</ul>
+
+<p>However, the gap narrows dramatically at deployment. During inference, AR models pay <strong>O(seq_len)</strong> serial forward passes. Diffusion models pay <strong>O(steps)</strong> parallel passes — and steps can be much smaller than seq_len.</p>
+
+<h2>2. Inference Costs: The Numbers</h2>
+
+<h3>Your L40S (48 GB VRAM)</h3>
+
+<table>
+  <tr>
+    <th>Model</th>
+    <th>Precision</th>
+    <th>VRAM</th>
+    <th>Fits L40S?</th>
+    <th>Throughput Estimate</th>
+  </tr>
+  <tr>
+    <td>LLaDA 8B</td>
+    <td>INT4</td>
+    <td>~4 GB + overhead (~2 GB) = <strong>6 GB</strong></td>
+    <td>✅ Yes</td>
+    <td>Unknown (new model, no published benchmarks)</td>
+  </tr>
+  <tr>
+    <td>LLaDA 8B</td>
+    <td>BF16</td>
+    <td>~16 GB + overhead (~4 GB) = <strong>20 GB</strong></td>
+    <td>✅ Yes</td>
+    <td>~50–200 tokens/sec (estimate based on 8B transformer)</td>
+  </tr>
+  <tr>
+    <td>DiffusionGemma 26B</td>
+    <td>INT4</td>
+    <td>~13 GB (26B × 0.5 bytes) + overhead</td>
+    <td>✅ Likely yes</td>
+    <td>No published data</td>
+  </tr>
+  <tr>
+    <td>DiffusionGemma 26B</td>
+    <td>BF16</td>
+    <td>~52 GB</td>
+    <td>❌ No</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td>SEDD medium (320M)</td>
+    <td>FP32</td>
+    <td>~3 GB</td>
+    <td>✅ Yes</td>
+    <td>Fast (small model)</td>
+  </tr>
+  <tr>
+    <td>Your tiny model (~100M)</td>
+    <td>FP32</td>
+    <td>~1–2 GB</td>
+    <td>✅ Yes</td>
+    <td>Very fast</td>
+  </tr>
+</table>
+
+<div class="callout callout-info">
+<strong>Key insight: no KV-cache.</strong> Diffusion LMs process all tokens in parallel each step — they don't need the key-value cache that dominates AR inference memory. This means your 48 GB is <em>entirely</em> available for weights and activations. An equivalent AR model needs extra GBs just for caching past tokens.
+</div>
+
+<h3>Diffusion Inference: The Compute-Quality Tradeoff</h3>
+
+<p>This is <strong>your biggest strategic lever</strong>. Diffusion LMs let you trade compute for quality at inference time:</p>
+
+<table>
+  <tr>
+    <th>Sampling Steps</th>
+    <th>Relative Compute</th>
+    <th>Quality</th>
+    <th>Use Case</th>
+  </tr>
+  <tr>
+    <td>4–8 steps</td>
+    <td>Very low</td>
+    <td>Poor (garbled text)</td>
+    <td>Draft generation, sketch</td>
+  </tr>
+  <tr>
+    <td>64–128 steps</td>
+    <td>Medium</td>
+    <td>Good</td>
+    <td>Standard generation</td>
+  </tr>
+  <tr>
+    <td>256–512 steps</td>
+    <td>High</td>
+    <td>Excellent</td>
+    <td>Quality-sensitive tasks</td>
+  </tr>
+  <tr>
+    <td>1000+ steps</td>
+    <td>Very high</td>
+    <td>Near-AR quality</td>
+    <td>Gold standard</td>
+  </tr>
+</table>
+
+<p>Compare to AR: AR <em>always</em> pays seq_len sequential forward passes. For a 1024-token sequence, that's 1024 forward passes. A diffusion model using 64 steps pays <strong>64 parallel forward passes</strong> — and each pass is cheaper per-token because there's no sequential masking (no KV-cache for causal masking).</p>
+
+<p>At long generation lengths (4096+ tokens), diffusion's advantage grows: AR pays linearly, diffusion pays sub-linearly (fixed steps for any length).</p>
+
+<h2>3. Data Requirements</h2>
+
+<p>How much data do you need? For a diffusion LM, the scaling is roughly the same as ARMs:</p>
+
+<table>
+  <tr>
+    <th>Model Size</th>
+    <th>Chinchilla-Optimal Tokens</th>
+    <th>Realistic Minimum</th>
+    <th>What You Can Fit in 100 GB SSD</th>
+  </tr>
+  <tr>
+    <td>100M</td>
+    <td>~2B</td>
+    <td>500M</td>
+    <td>✅ 2B tokens fits (~4 GB)</td>
+  </tr>
+  <tr>
+    <td>300M</td>
+    <td>~6B</td>
+    <td>2B</td>
+    <td>✅ 6B tokens fits (~12 GB)</td>
+  </tr>
+  <tr>
+    <td>1B</td>
+    <td>~20B</td>
+    <td>5B</td>
+    <td>✅ 20B tokens fits (~40 GB)</td>
+  </tr>
+  <tr>
+    <td>8B</td>
+    <td>~164B</td>
+    <td>50B</td>
+    <td>⚠️ 164B needs ~320 GB SSD</td>
+  </tr>
+</table>
+
+<p><strong>Storage math</strong>: 1B tokens ≈ 2 GB of raw text. With your expandable SSD (~100 GB+), you can store 50B tokens easily. The <a href="https://huggingface.co/datasets/SlimPajama-627B/train">SlimPajama dataset</a> (627B tokens, ~1.2 TB) is the go-to for scaling experiments — you'd need a subset.</p>
+
+<p>For local prototyping (8 GB VRAM), you don't need massive data. <strong>A few hundred MB of text</strong> (Shakespeare, the works of Machado de Assis, Portuguese Wikipedia subset — excellent for Brazilian context) is more than enough for a proof-of-concept.</p>
+
+<h2>4. Your Viability Matrix</h2>
+
+<p>Here's the bottom line, categorized by activity:</p>
+
+<h3>🟢 Definitely Feasible (8 GB local + L40S)</h3>
+<ul>
+  <li><strong>Train a character-level or small-vocab diffusion LM</strong> from scratch (lessons 0004–0005)</li>
+  <li><strong>Run LLaDA 8B inference</strong> (4-bit quantization, fits on both GPUs)</li>
+  <li><strong>Fine-tune a small diffusion LM</strong> (up to ~300M params) on your L40S</li>
+  <li><strong>Experiment with sampling steps</strong>, compute-quality tradeoffs, schedule tuning</li>
+  <li><strong>Build custom inference pipelines</strong> on top of existing diffusion models</li>
+</ul>
+
+<h3>🟡 Borderline (L40S with careful engineering)</h3>
+<ul>
+  <li><strong>Train a 1B diffusion LM</strong> from scratch (48 GB VRAM may be tight for large batch sizes; needs gradient accumulation and possibly activation checkpointing)</li>
+  <li><strong>Fine-tune LLaDA 8B</strong> (LoRA or QLoRA on L40S — 48 GB is enough for 8B with LoRA)</li>
+  <li><strong>Run DiffusionGemma 26B</strong> (4-bit quantized on L40S; no throughput numbers available)</li>
+</ul>
+
+<h3>🔴 Not Feasible (needs cluster)</h3>
+<ul>
+  <li><strong>Train a multi-billion-param diffusion LM from scratch</strong></li>
+  <li><strong>Reproduce LLaDA, DiffusionGemma, or DiffuMamba training runs</strong></li>
+  <li><strong>Training on multi-trillion-token datasets</strong></li>
+</ul>
+
+<h2>5. Verdict</h2>
+
+<div class="callout callout-success">
+<strong>Should you invest time in diffusion LMs?</strong>
+
+<p><strong>Yes — but for specific reasons.</strong></p>
+
+<p><strong>Train from scratch:</strong> You can build and train small diffusion LMs on your local GPU. This gives you deep understanding and lets you experiment with the architecture — but you won't produce a SOTA model this way.</p>
+
+<p><strong>Use existing models:</strong> LLaDA 8B runs on your L40S in BF16, and even on your 8 GB local GPU in 4-bit. This alone makes diffusion LMs immediately accessible for experimentation, application, and fine-tuning.</p>
+
+<p><strong>The real opportunity:</strong> Diffusion LMs are <em>early</em>. The field is moving fast (SEDD was ICML 2024 Best Paper; LLaDA and DiffusionGemma are from 2025). The architectures are not settled. Training recipes are being discovered. If you build expertise now, you're ahead of the curve for when these models become more accessible.</p>
+
+<p><strong>The honest limitation:</strong> You cannot compete with Google or Meta on training. But you <em>can</em> understand the architecture deeply, run their models, fine-tune them for specific tasks, and potentially contribute techniques that work in the single-GPU regime — a space nobody is optimizing for yet.</p>
+</div>
+
+<h2>What the Next Lessons Will Cost (Hardware)</h2>
+
+<table>
+  <tr>
+    <th>Lesson</th>
+    <th>Hardware Needed</th>
+    <th>GPU Hours</th>
+    <th>Data Needed</th>
+  </tr>
+  <tr>
+    <td>0002 (Why Not AR?)</td>
+    <td>None</td>
+    <td>0</td>
+    <td>None</td>
+  </tr>
+  <tr>
+    <td>0003 (Core Mechanics)</td>
+    <td>None</td>
+    <td>0</td>
+    <td>None</td>
+  </tr>
+  <tr>
+    <td>0004 (Masked Diffusion)</td>
+    <td>None</td>
+    <td>0</td>
+    <td>None</td>
+  </tr>
+  <tr>
+    <td>0005 (Hands-On)</td>
+    <td>8 GB local GPU</td>
+    <td>~0.5–1</td>
+    <td>A few MB (Shakespeare)</td>
+  </tr>
+  <tr>
+    <td>0006 (Architectures)</td>
+    <td>None</td>
+    <td>0</td>
+    <td>None</td>
+  </tr>
+  <tr>
+    <td>0007 (Scaling & Build)</td>
+    <td>None (synthesis)</td>
+    <td>0</td>
+    <td>None</td>
+  </tr>
+</table>
+
+<p>Only lesson 0005 needs your GPU. All others are reading + thinking.</p>
+
+<h2>Primary Sources for This Lesson</h2>
+<ul>
+  <li><a href="https://arxiv.org/abs/2410.18514">SMDM: Scaling up Masked Diffusion Models on Text</a> — Scaling laws and compute gap analysis</li>
+  <li><a href="https://arxiv.org/abs/2502.09992">LLaDA: Large Language Diffusion Models</a> — Training costs for 8B model</li>
+  <li><a href="https://arxiv.org/abs/2310.16834">SEDD: Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution</a> — ICML 2024 Best Paper</li>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM: Simple and Effective Masked Diffusion Language Models</a> — The most practical starting point</li>
+</ul>
+
+<h2>Your Decision</h2>
+
+<p>You now have the numbers. The remaining lessons will give you the understanding behind these numbers — the <em>why</em> of each cost, the architecture tradeoffs, and the hands-on experience of building one yourself.</p>
+
+<p><strong>Should we continue to Lesson 0002?</strong> If you want to adjust scope, hardware targets, or dive speeds, tell me now before I build the next one.</p>
+
+<blockquote>
+<em>Got questions about any number here? Ask me. The data comes from published papers; if you want me to dig deeper into a specific cost, I can.</em>
+</blockquote>
+
+<nav class="lesson-nav">
+  <span>← (first lesson)</span>
+  <a href="0002-why-not-autoregressive.html">Next → Why Not Autoregressive?</a>
+</nav>
+
+</body>
+</html>

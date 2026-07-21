@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · GPT Training Pipeline Cheat Sheet</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .flow { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: center; margin: 1.5rem 0; }
+  .flow-step { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .5rem .8rem; font-size: .8rem; text-align: center; min-width: 100px; }
+  .flow-arrow { font-size: 1.2rem; color: var(--accent); }
+  dt { font-weight: 600; margin-top: .8rem; }
+  dd { margin-left: 1.2rem; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Reference</p>
+<h1>GPT Training Pipeline Cheat Sheet</h1>
+<p class="subtitle">The five stages, the key hyperparameters, and how to read training output.</p>
+
+<h2>The five stages</h2>
+
+<div class="flow">
+  <span class="flow-step">① Tokenizer<br><small>text → ints</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">② Embedding<br><small>ints → vectors</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">③ Transformer<br><small>vectors → vectors</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">④ Output Head<br><small>vectors → probs</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">⑤ Loss &amp; Update<br><small>compare + nudge</small></span>
+</div>
+
+<p>Stages ③→④→⑤ repeat for every batch. The loop is the training step.</p>
+
+<h2>Key hyperparameters</h2>
+
+<table>
+<thead><tr><th>Param</th><th>What it controls</th><th>Our values</th></tr></thead>
+<tbody>
+<tr><td><code>VOCAB_SIZE</code></td><td>How many unique tokens the model knows</td><td>65 (char-level)</td></tr>
+<tr><td><code>EMBED_DIM</code></td><td>Size of each token's vector representation</td><td>192</td></tr>
+<tr><td><code>NUM_HEADS</code></td><td>Parallel attention computations per block</td><td>6</td></tr>
+<tr><td><code>NUM_LAYERS</code></td><td>Number of transformer blocks stacked</td><td>4</td></tr>
+<tr><td><code>BLOCK_SIZE</code></td><td>Maximum context length (tokens of history)</td><td>128</td></tr>
+<tr><td><code>BATCH_SIZE</code></td><td>Sequences processed in parallel per step</td><td>64</td></tr>
+<tr><td><code>LR</code></td><td>Learning rate — step size for weight updates</td><td>3e-4</td></tr>
+</tbody>
+</table>
+
+<h2>Reading training output</h2>
+
+<dl>
+  <dt>Loss starts high</dt>
+  <dd>Good. Random weights give random predictions. Starting loss ≈ ln(VOCAB_SIZE) ≈ 4.17 for 65 tokens.</dd>
+
+  <dt>Loss decreases</dt>
+  <dd>The model is learning. Each step nudges weights to reduce surprise.</dd>
+
+  <dt>Train loss &lt; val loss</dt>
+  <dd>Expected. The model has seen training data before, not validation data.</dd>
+
+  <dt>Large train/val gap</dt>
+  <dd>Overfitting. Model memorized instead of generalized. Solutions: more data, smaller model, regularization.</dd>
+
+  <dt>Loss plateaus</dt>
+  <dd>Model capacity exhausted or learning rate too small.</dd>
+
+  <dt>Loss diverges (goes up)</dt>
+  <dd>Learning rate too high. Training is unstable.</dd>
+</dl>
+
+<h2>Loss curve cheat sheet</h2>
+
+<pre style="font-size:.85rem; line-height:1.3">
+Healthy training:     Overfitting:            LR too high:
+loss                  loss                    loss
+│\                    │\                      │
+│ \                   │ \__ train             │\__
+│  \__ val            │    \__ val            │  \ ── train
+│    \                │    /                  │   ─/
+│     \               │   /                   │   / ── val
+└────── steps         └──────── steps         └────── steps
+</pre>
+
+<h2>Common terms</h2>
+
+<dl>
+  <dt>Cross-entropy loss</dt>
+  <dd>How surprised the model was by the actual next token. Lower is better.</dd>
+
+  <dt>Backpropagation</dt>
+  <dd>The algorithm that computes, for every weight, "which direction should I nudge it to reduce loss?"</dd>
+
+  <dt>AdamW</dt>
+  <dd>The optimizer. It decides how much to nudge each weight (accounting for momentum and per-weight scaling).</dd>
+
+  <dt>Epoch</dt>
+  <dd>One full pass through the entire training dataset.</dd>
+
+  <dt>Step</dt>
+  <dd>One forward + backward + update cycle on one batch.</dd>
+
+  <dt>Perplexity</dt>
+  <dd><code>exp(loss)</code>. Intuitive interpretation: "how many equally-likely next tokens does the model see?" Lower = more confident.</dd>
+
+  <dt>Causal mask</dt>
+  <dd>A triangular mask that prevents the model from attending to future tokens during training.</dd>
+</dl>
+
+<h2>Links</h2>
+<ul>
+  <li><a href="https://github.com/karpathy/nanoGPT">nanoGPT</a> — the canonical minimal GPT implementation</li>
+  <li><a href="https://www.youtube.com/watch?v=kCc8FvEb1nY">Let's build GPT (Karpathy)</a> — the video walkthrough</li>
+  <li><a href="https://arxiv.org/abs/1706.03762">"Attention Is All You Need"</a> — the original transformer paper</li>
+</ul>
+
+</body>
+</html>

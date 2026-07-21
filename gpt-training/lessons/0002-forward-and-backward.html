@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 · Forward &amp; Backward</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .twopass { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0; }
+  .twopass .pass { background: var(--card-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.2rem; }
+  .twopass h3 { margin-top: 0; }
+  @media (max-width: 34rem) { .twopass { grid-template-columns: 1fr; } }
+  .dance { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem; margin: 1.4rem 0; }
+  .dance .line { display: flex; gap: .8rem; align-items: baseline; margin: .55rem 0; }
+  .dance code { background: none; font-size: .9rem; flex: 0 0 14rem; }
+  .dance .what { color: var(--muted); font-size: .88rem; }
+  mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; padding: 0 .15em; border-radius: 2px; }
+  .grid { font-family: var(--mono); font-size: .76rem; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.1rem; margin: 1.2rem 0; white-space: pre; overflow-x: auto; }
+  .grid .yes { color: var(--good); font-weight: 700; }
+  .grid .no { color: var(--muted); }
+  .why { background: var(--card-bg); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 8px; padding: 1rem 1.2rem; margin: 1.4rem 0; }
+  .why h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 2 · GPT Training from Scratch</p>
+<h1>Forward &amp; Backward</h1>
+<p class="subtitle">The two passes that <em>are</em> learning — and why <code>forward()</code> and <code>backward()</code> are two halves of one machine.</p>
+
+<div class="card">
+<strong>The win:</strong> by the end of this lesson you will be able to point at
+any line in your training loop and say exactly which of the two passes it belongs
+to, and what it does to the model's weights. The mystery of <code>forward()</code>
+and <code>loss.backward()</code> disappears.
+</div>
+
+<h2>Should you learn this now or later?</h2>
+
+<p>
+<strong>Now.</strong> You guessed right on two counts: these <em>are</em> PyTorch
+mechanics, and they <em>are</em> "forward propagation" and "backward propagation."
+But this isn't a framework detail to defer — it is the literal answer to your
+mission's central question, <em>"how does training really work?"</em> Everything
+else in the pipeline (the tokenizer, attention, the optimizer) is plumbing around
+this one idea. The original plan put it at Lesson 6, but you ran the code and
+asked the right question at the right moment, so we're pulling it forward.
+</p>
+
+<h2>One machine, two passes</h2>
+
+<p>
+A neural network learns by repeating a two-step cycle, millions of times. Think of
+a student taking practice exams:
+</p>
+
+<div class="twopass">
+  <div class="pass">
+    <h3>→ Forward pass</h3>
+    <p style="margin-bottom:.4rem">
+    Run the input through the model to get a prediction. <em>"Here are my answers."</em>
+    </p>
+    <p class="note" style="margin:0">Also called <strong>forward propagation</strong>. This is what your <code>forward()</code> method defines.</p>
+  </div>
+  <div class="pass">
+    <h3>← Backward pass</h3>
+    <p style="margin-bottom:.4rem">
+    Work backward from the score to figure out which habits caused each mistake, and
+    how to adjust them. <em>"Here's how I should study differently."</em>
+    </p>
+    <p class="note" style="margin:0">Also called <strong>backpropagation</strong>. This is what <code>loss.backward()</code> runs.</p>
+  </div>
+</div>
+
+<p>
+The two are inseparable: you cannot grade an exam you never took. The backward pass
+can only run because the forward pass <em>recorded what it did</em> on the way through.
+That recording is the link you were sensing between the two methods.
+</p>
+
+<h2>The forward pass: <code>nn.Module</code> and <code>forward()</code></h2>
+
+<p>
+<code>nn.Module</code> is PyTorch's base class for anything that holds learnable
+weights. When your <code>GPT</code> class subclasses it, you get three things for
+free:<sup>[<a href="https://pytorch.org/docs/stable/generated/torch.nn.Module.html">1</a>]</sup>
+</p>
+
+<ul>
+  <li><strong>Parameter tracking</strong> — every <code>nn.Linear</code>, <code>nn.Embedding</code>, etc. you assign as an attribute is auto-registered, so <code>model.parameters()</code> (the thing you hand to the optimizer) finds all of them.</li>
+  <li><strong>Device &amp; mode plumbing</strong> — <code>.to(DEVICE)</code>, <code>.train()</code>, <code>.eval()</code> all walk that registry for you.</li>
+  <li><strong>The <code>__call__</code> hook</strong> — this is the one that explains a line that probably looked odd.</li>
+</ul>
+
+<p>
+You <strong>define</strong> <code>forward()</code>, but you never call it directly.
+In the training loop you wrote <code>logits = model(x)</code>, not
+<code>model.forward(x)</code>. That's deliberate:
+</p>
+
+<div class="callout">
+Calling the module — <code>model(x)</code> — runs <code>nn.Module.__call__</code>,
+which fires registered hooks and sets up bookkeeping, <mark>then</mark> calls your
+<code>forward()</code>. Calling <code>forward()</code> directly skips that wrapper.
+<strong>Rule: define <code>forward</code>, but always invoke the module.</strong>
+</div>
+
+<p>
+Your <code>forward()</code> is just the recipe for turning input IDs into logits —
+embed, add positions, run the blocks, project to vocabulary:
+</p>
+
+<pre><code>def forward(self, x):              # x: (B, T) token IDs
+    B, T = x.shape
+    tok_emb = self.token_embedding(x)
+    pos_emb = self.pos_embedding(torch.arange(T, device=x.device))
+    x = tok_emb + pos_emb
+    for block in self.blocks:
+        x = block(x)
+    x = self.ln_f(x)
+    return self.head(x)            # (B, T, VOCAB_SIZE) logits</code></pre>
+
+<p>
+Here is the part that makes the backward pass possible. As each of those operations
+runs, PyTorch's <strong>autograd</strong> engine quietly records it into a
+<em>computation graph</em> — a map of "this tensor was produced from those tensors,
+by this operation."<sup>[<a href="https://pytorch.org/tutorials/beginner/blitz/autograd_tutorial.html">2</a>]</sup>
+The forward pass doesn't just compute the answer; it leaves a breadcrumb trail back
+to every weight that influenced it.
+</p>
+
+<h2>What's actually in <code>logits</code> — and why every position predicts</h2>
+
+<p>
+A trap worth defusing before we go on: <strong>logits are not the weights, and they
+are not probabilities.</strong> The weights are the learned machinery <em>inside</em>
+the layers; the logits are what comes <em>out</em> when input flows through that
+machinery — <strong>raw scores</strong>, one per vocabulary entry. They can be negative,
+don't sum to 1, and only become probabilities after <code>softmax</code> (which is
+exactly the next step in your <code>generate()</code>):
+</p>
+
+<pre><code>logits = model(x)               # raw scores, e.g. [2.1, -0.4, 5.8, ...]  shape (B, T, 65)
+probs  = F.softmax(logits, -1)  # now a distribution: [0.04, 0.01, 0.71, ...]  sums to 1</code></pre>
+
+<p>
+The shape <code>(B, T, VOCAB_SIZE)</code> is about your <em>data</em>, not your layers:
+<strong>B</strong> sequences × <strong>T</strong> positions × <strong>65</strong> scores.
+The number of transformer layers never appears — they're passed <em>through</em>. And
+note what the <code>T</code> axis means: the model emits a next-character guess at
+<em>every</em> position at once, not just the last one.
+</p>
+
+<h3>The targets are the input, shifted left by one</h3>
+
+<p>
+Take <code>"The quick brown "</code> (16 characters). One forward pass produces 16
+independent next-char guesses; the true answer for each position is simply the
+<em>next</em> character — which is your <code>CharDataset</code>'s
+<code>y = data[i+1 : i+T+1]</code>:
+</p>
+
+<div class="grid">input  x:  T  h  e  ' '  q  u  i  c  k  ' '  b  r  o  w  n  ' '
+target y:  h  e ' '  q   u  i  c  k ' '  b   r  o  w  n ' ' <span class="yes">(f)</span>
+           └─ "after T predict h"            "after the whole prefix predict f" ─┘</div>
+
+<p>
+Predicting the <code>f</code> of <em>fox</em> is just the <strong>last</strong> column.
+The other 15 columns re-predict characters you already have — useful because in
+training we know every answer and use them all as teaching signal. (And remember:
+char-level, so it guesses the next <em>character</em>, not the next word.)
+</p>
+
+<h3>One pass, not 16 — the causal mask does it</h3>
+
+<p>
+The model does <strong>not</strong> chop the input into 16 growing prefixes and run them
+separately. The whole sequence goes through once, and a <strong>causal mask</strong> —
+the <code>torch.tril</code> line in your <code>SelfAttention</code> — blinds each
+position to everything on its right, so each position behaves <em>as if</em> it only
+saw the characters up to itself:
+</p>
+
+<div class="grid">              can attend to →
+               T   h   e  ' '  q
+   pos 0  T  [ <span class="yes">✓</span>  <span class="no">·</span>  <span class="no">·</span>  <span class="no">·</span>  <span class="no">·</span> ]   sees: T
+   pos 1  h  [ <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="no">·</span>  <span class="no">·</span>  <span class="no">·</span> ]   sees: T h
+   pos 2  e  [ <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="no">·</span>  <span class="no">·</span> ]   sees: T h e
+   pos 3 ' ' [ <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="no">·</span> ]   sees: T h e ' '
+   pos 4  q  [ <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span>  <span class="yes">✓</span> ]   sees: T h e ' ' q</div>
+
+<p>
+So you get exactly the behaviour you'd expect from 16 growing prefixes, but from a
+<strong>single matrix multiply</strong> — no Python loop, no chunking. This mask is the
+heart of <a href="#">Lesson 4 (Attention)</a>; for now just know it's what makes the
+parallel prediction possible.
+</p>
+
+<div class="why">
+<h3>Why bother predicting at every position?</h3>
+<p style="margin-bottom:.6rem">
+<strong>Reason 1 — efficiency.</strong> A 16-character sequence secretly contains 16
+complete "guess the next character" problems. Predict only at the last position and one
+forward pass earns you <em>one</em> gradient signal; predict at all positions and the
+<em>same</em> matrix multiply earns you <em>16</em>. That's why the loss flattens to
+<code>(B*T, 65)</code> and averages — maximum learning per unit of compute.
+</p>
+<p style="margin:0">
+<strong>Reason 2 — the mask keeps it honest.</strong> Position 2 must predict character
+3, which is sitting right there in the input. Without the mask it would learn the
+useless rule "copy the next input" — perfect accuracy, zero understanding. Blinding each
+position to its own answer forces real prediction. So the mask both <em>enables</em> the
+parallel training and <em>keeps every one of those 16 signals valid</em>.
+</p>
+<p class="note" style="margin:.6rem 0 0">This only works in training, where we already
+know the answers (called <em>teacher forcing</em>). Generation can't — char 17 doesn't
+exist until char 16 is chosen — so it runs strictly one position at a time.</p>
+</div>
+
+<h2>The loss: collapsing everything to one number</h2>
+
+<p>
+The forward pass gives you logits — a score for every possible next token, at every
+position. <code>F.cross_entropy</code> compares those against the <em>true</em> next
+tokens and collapses the whole batch into a <strong>single scalar</strong>: how
+surprised the model was. High loss = bad predictions.
+</p>
+
+<p>
+That single number is the root of the computation graph. It is the thing you want to
+make smaller, and the starting point for the walk backward.
+</p>
+
+<h2>The backward pass: <code>loss.backward()</code></h2>
+
+<p>
+Calling <code>.backward()</code> on the loss tells autograd to walk the recorded graph
+<em>in reverse</em>, from the loss back to every weight, applying the chain rule from
+calculus at each step.<sup>[<a href="https://www.youtube.com/watch?v=VMj-3S1tku0">3</a>]</sup>
+The result it computes for each weight is a <strong>gradient</strong>:
+</p>
+
+<blockquote>
+"If I nudge this one weight up by a hair, does the loss go up or down — and how steeply?"
+</blockquote>
+
+<p>
+After <code>loss.backward()</code> returns, every parameter <code>p</code> has its
+answer sitting in <code>p.grad</code>. No weights have changed yet — you've only
+computed the <em>directions</em>. Picture the loss as a landscape and each gradient as
+an arrow pointing uphill; to reduce loss you'll step the opposite way. That stepping
+is the optimizer's job, not backward's.
+</p>
+
+<h2>The three-line dance, mapped to your code</h2>
+
+<p>Every training step in your script is the same three moves, in this exact order:</p>
+
+<div class="dance">
+  <div class="line"><code>optimizer.zero_grad()</code><span class="what">Wipe last step's gradients. PyTorch <em>accumulates</em> into <code>.grad</code> by default, so you must clear first.</span></div>
+  <div class="line"><code>loss.backward()</code><span class="what">Backward pass. Fill every <code>p.grad</code> by walking the graph the forward pass recorded.</span></div>
+  <div class="line"><code>optimizer.step()</code><span class="what">Nudge every weight a little, opposite its gradient. AdamW decides the exact step size.</span></div>
+</div>
+
+<p>
+Forgetting <code>zero_grad()</code> is the classic beginner bug: gradients from old
+batches pile on top of new ones and training quietly destabilizes. The order is not
+negotiable — you can't step before you know the direction, and you can't find the
+direction without the forward pass that came just before these three lines.
+</p>
+
+<h2>Check yourself</h2>
+
+<p>Recall, don't recognize — answer before you re-read. This is where it sticks.</p>
+
+<div class="quiz" id="q1">
+  <div class="q">What does <code>loss.backward()</code> actually produce?</div>
+  <button class="opt" data-correct="1">Gradient of the loss per weight</button>
+  <button class="opt">The next token sampled from logits</button>
+  <button class="opt">The average loss over the batch</button>
+  <div class="fb"></div>
+</div>
+
+<div class="quiz" id="q2">
+  <div class="q">Why call <code>model(x)</code> instead of <code>model.forward(x)</code>?</div>
+  <button class="opt" data-correct="1">Calling the module runs registered hooks too</button>
+  <button class="opt">Calling forward directly skips the loss step</button>
+  <button class="opt">Calling the module trains faster on GPU</button>
+  <div class="fb"></div>
+</div>
+
+<div class="quiz" id="q3">
+  <div class="q">What lets <code>backward()</code> know how to compute gradients?</div>
+  <button class="opt" data-correct="1">The graph recorded during the forward pass</button>
+  <button class="opt">The learning rate set in the optimizer</button>
+  <button class="opt">The batch size chosen for each step</button>
+  <div class="fb"></div>
+</div>
+
+<div class="quiz" id="q4">
+  <div class="q">What does <code>optimizer.zero_grad()</code> prevent?</div>
+  <button class="opt" data-correct="1">Gradients accumulating across successive training steps</button>
+  <button class="opt">Weights updating before the backward pass</button>
+  <button class="opt">Logits leaking into the next batch</button>
+  <div class="fb"></div>
+</div>
+
+<div class="quiz" id="q5">
+  <div class="q">Straight out of <code>model(x)</code>, the values in <code>logits</code> are…</div>
+  <button class="opt" data-correct="1">raw scores, one per vocabulary entry</button>
+  <button class="opt">probabilities that sum to one</button>
+  <button class="opt">the learned weights of each layer</button>
+  <div class="fb"></div>
+</div>
+
+<div class="quiz" id="q6">
+  <div class="q">Why predict at every position, not just the last?</div>
+  <button class="opt" data-correct="1">More training signal from one forward pass</button>
+  <button class="opt">Generated text comes out more diverse here</button>
+  <button class="opt">The softmax step can then be skipped</button>
+  <div class="fb"></div>
+</div>
+
+<div class="card" id="scorecard" style="display:none">
+<strong>Scorecard:</strong> <span id="score"></span>
+<p class="note" id="scorenote"></p>
+</div>
+
+<h2>The drill (do this in your script)</h2>
+
+<ol>
+  <li>Right after <code>loss.backward()</code>, add: <code>print(model.head.weight.grad.shape, model.head.weight.grad.abs().mean())</code>. Run one step. You're looking at real gradients — the direction signal for the output head.</li>
+  <li>Now move that same print line to <em>before</em> <code>loss.backward()</code>. What happens? (You'll hit <code>None</code> — the gradients don't exist until the backward pass fills them.)</li>
+  <li>Comment out <code>optimizer.zero_grad()</code> entirely and run a few epochs. Watch the loss misbehave. Then put it back.</li>
+  <li>Come back and tell me what you saw — especially the gradient magnitudes early vs late in training.</li>
+</ol>
+
+<div class="callout">
+<strong>Primary source:</strong> watch Andrej Karpathy's
+<a href="https://www.youtube.com/watch?v=VMj-3S1tku0">"The spelled-out intro to backpropagation"</a>
+(micrograd). In ~2 hours he builds an autograd engine from scratch in pure Python —
+after which <code>loss.backward()</code> will feel completely transparent. For the
+PyTorch-specific mechanics, the <a href="https://pytorch.org/tutorials/beginner/blitz/autograd_tutorial.html">autograd tutorial</a>
+is the canonical reference. Keep the
+<a href="../reference/training-step-cheatsheet.html">training-step cheat sheet</a> open while you work.
+</div>
+
+<div class="ask">
+<strong>I'm your teacher — ask me anything.</strong> Want the chain rule worked out on
+a two-weight toy example? Curious what AdamW does that plain gradient descent doesn't?
+Wondering what <code>requires_grad</code> and <code>torch.no_grad()</code> are for
+(you used the latter in <code>generate()</code>)? Bring it — these are the natural
+next threads to pull.
+</div>
+
+<div class="lesson-nav">
+<a href="0001-the-full-pipeline.html">← Lesson 1: The Full Pipeline</a>
+<a href="#">→ Next: The Tokenizer</a>
+<span class="note">Pulled forward from Lesson 6 because you asked the right question.</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+const FEEDBACK = {
+  q1: 'Backward computes, for every weight, ∂loss/∂weight — a <em>gradient</em>, stored in <code>p.grad</code>. It changes no weights; it only finds directions. Sampling the next token happens in the forward pass; averaging the loss is what <code>cross_entropy</code> already did.',
+  q2: 'Invoking the module runs <code>nn.Module.__call__</code>, which fires hooks and bookkeeping, then calls your <code>forward()</code>. Calling <code>forward()</code> directly bypasses that wrapper. It has nothing to do with speed or the loss.',
+  q3: 'During the forward pass, autograd records a computation graph linking each output back to the weights that produced it. <code>backward()</code> walks that graph in reverse. Learning rate and batch size never enter into computing the gradients.',
+  q4: 'PyTorch <em>accumulates</em> gradients into <code>.grad</code> by default, so without <code>zero_grad()</code> each step adds to the last step’s stale gradients and training destabilizes. It does not gate weight updates or touch logits.',
+  q5: 'Logits are <em>raw, unbounded scores</em> — one per vocabulary entry, at every position. They become probabilities only after <code>softmax</code>. And they are outputs, not the weights: weights are the machinery inside the layers; logits are what comes out when input flows through it.',
+  q6: 'Every position is a free "guess the next char" example, so one forward pass earns B×T gradient signals instead of one — maximum learning per matmul. It is unrelated to diversity, and softmax still runs. The causal mask keeps those extra signals from cheating.'
+};
+initQuiz(FEEDBACK, {
+  perfect: 'Clean sweep — the two passes are yours. Now run the drill and watch real gradients.',
+  partial: 'Re-read the section for any you missed, then run the drill — seeing p.grad go from None to numbers makes it concrete.'
+});
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("pre > code").forEach(code => {
+    const pre = code.parentElement;
+    pre.style.position = "relative";
+    const btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.textContent = "📋 copy";
+    btn.style.cssText = "position:absolute;top:.5rem;right:.5rem;font-size:.75rem;padding:.2rem .6rem;background:var(--bg);border:1px solid var(--rule);border-radius:4px;cursor:pointer;opacity:.6";
+    btn.onmouseenter = () => btn.style.opacity = "1";
+    btn.onmouseleave = () => btn.style.opacity = ".6";
+    btn.onclick = async () => {
+      await navigator.clipboard.writeText(code.textContent);
+      btn.textContent = "✓ copied";
+      setTimeout(() => { btn.textContent = "📋 copy"; }, 2000);
+    };
+    pre.appendChild(btn);
+  });
+});
+</script>
+</body>
+</html>

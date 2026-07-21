@@ -1,0 +1,168 @@
+# Training Feasibility: Cluster Scenarios for Your 2× L40S Nodes
+
+Working through the memory and FLOP math so you can make informed decisions.
+
+## Baseline: What We're Comparing Against
+
+| Model | Total Params | Active Params | Training Cost | Hardware Used |
+|-------|-------------|---------------|---------------|---------------|
+| **DiffusionGemma 26B** | 26B (MoE) | ~4B | Not disclosed | Google TPU v5p pods |
+| **LLaDA 8B** (dense) | 8B | 8B | **130K H800 GPU-hours** | H800 cluster |
+
+**Key unknown**: DiffusionGemma's training data size isn't published. If it follows typical scaling, expect 2T+ tokens. LLaDA 8B used 2.3T tokens at 130K GPU-hours.
+
+## What Fits on Your Hardware
+
+Your building block: **1 node = 2× L40S = 96 GB total VRAM, ~364 TFLOPS peak (FP16 aggregate).**
+
+### Model State Memory (Training)
+
+For BF16 mixed-precision training with AdamW (standard recipe):
+
+| Component | Bytes per param | For 1B model | For 3B model | For 7B model |
+|-----------|----------------|--------------|--------------|--------------|
+| Weights (BF16 compute copy) | 2 | 2 GB | 6 GB | 14 GB |
+| Weights (FP32 master) | 4 | 4 GB | 12 GB | 28 GB |
+| Gradients (BF16) | 2 | 2 GB | 6 GB | 14 GB |
+| Adam m (FP32) | 4 | 4 GB | 12 GB | 28 GB |
+| Adam v (FP32) | 4 | 4 GB | 12 GB | 28 GB |
+| **Model states total** | **16** | **16 GB** | **48 GB** | **112 GB** |
+| Activations (est.) | — | ~8 GB | ~16 GB | ~32 GB |
+| **Grand total** | — | **~24 GB** | **~64 GB** | **~144 GB** |
+
+A single L40S (48 GB) can train up to **~1B dense params** (24 GB model + activations fits).
+
+A 2×L40S node (96 GB) with FSDP can train up to **~3B dense params** (48 GB model states sharded across 2 GPUs + activations = ~40 GB each).
+But you need another dimension: a 3B model's model states are 48 GB. Sharded across 2 GPUs = 24 GB each. Plus ~16 GB activations per GPU = 40 GB per GPU. That fits on L40S (48 GB) but tightly. Batch size will be very small.
+
+### With 2 nodes (4× L40S, 192 GB total, 4 GPUs):
+
+Sharding across 4 GPUs with FSDP:
+- 7B model: 112 GB model states ÷ 4 = 28 GB per GPU + ~20 GB activations = 48 GB → **barely fits**
+- That's the practical ceiling for this cluster configuration
+
+**But** this assumes perfect FSDP efficiency, minimal activation memory, and no overhead. In practice, 3B is a comfortable max, 7B is painful.
+
+## Training Time Estimates
+
+Using the SMDM compute-gap finding (16× more compute than AR for same loss), here are realistic scenarios:
+
+### Scenario A: "Proof of concept" — 300M dense diffusion LM
+
+| Metric | Value |
+|--------|-------|
+| **Hardware** | 1× L40S (single GPU) |
+| **Training tokens** | 2B (Chinchilla-optimal) |
+| **Estimated time** | **~2 days** |
+| **Quality vs AR** | Worse than AR 300M but shows diffusion works |
+| **Cost (electricity)** | ~$8-12 |
+
+The most realistic "I built this myself" scenario. Fits comfortably on one L40S.
+
+### Scenario B: "Serious experiment" — 1B dense diffusion LM
+
+| Metric | Value |
+|--------|-------|
+| **Hardware** | 1× L40S |
+| **Training tokens** | 5B (sub-optimal, memory-bound) |
+| **Estimated time** | **~1-2 weeks** |
+| **Quality vs AR** | Noticeably worse than AR 1B, but usable for domain tasks |
+| **Cost** | ~$50-100 |
+
+Feasible but painful. You'd spend more time fighting VRAM limits than training.
+
+### Scenario C: "Ambitious" — 1B dense with full data
+
+| Metric | Value |
+|--------|-------|
+| **Hardware** | 2 nodes, 4× L40S (FSDP) |
+| **Training tokens** | 20B (Chinchilla-optimal) |
+| **Estimated time** | **~3-4 weeks** |
+| **Quality gap vs AR** | ~16× gap means this equals ~125M AR in quality |
+| **Cost** | ~$300-500 |
+
+Four GPUs for a month to get 125M-AR-quality. This is the **sobering math** of the 16× compute gap.
+
+### Scenario D: "Match DiffusionGemma active params" — 3B dense diffusion LM
+
+| Metric | Value |
+|--------|-------|
+| **Hardware** | 2 nodes, 4× L40S (FSDP) |
+| **Training tokens** | 20B (sub-optimal) |
+| **Estimated time** | **~6-8 weeks** |
+| **Quality vs AR** | Worse than AR 3B; 16× gap = ~190M AR quality |
+| **Cost** | ~$1,000-2,000 |
+
+Two months and a thousand bucks to get ~190M AR quality. **Not worth it.**
+
+### Scenario E: "Match LLaDA quality" — 8B dense diffusion LM
+
+| Metric | Value |
+|--------|-------|
+| **Hardware** | 2 nodes, 4× L40S (FSDP + activation ckpt) |
+| **Training tokens** | 50B (way sub-optimal) |
+| **Estimated time** | **~4-6 months** |
+| **Quality** | Below LLaDA quality |
+| **Cost** | ~$5,000+ |
+
+**Not feasible.** And it still wouldn't match LLaDA (which had 130K H800 GPU-hours).
+
+## The "16× Compute Gap" Concrete Example
+
+Let me make this visceral. The SMDM paper found:
+
+> MDMs (masked diffusion models) need **16× more training compute** to reach the same validation loss as an autoregressive model.
+
+So if training a 1B AR model to quality level Q costs:
+
+| Model | Compute | Time (4× L40S) | Quality |
+|-------|---------|-----------------|---------|
+| AR 1B | 1× | ~1 week | Q |
+| MDM 1B | 16× | **~16 weeks** | Q |
+| AR 125M | 0.016× | ~3 hours | Q−δ |
+| MDM 1B with 1× compute | 1× | ~1 week | Q−δ ≈ AR 125M |
+
+**A 1B MDM trained with the same compute as a 1B AR model achieves roughly the quality of a 125M AR model.** You're spending 1B-param compute for 125M-param quality. This is the fundamental economic challenge.
+
+## The Autoregressive Baseline Comparison
+
+For context, here's what you could train on the same cluster with AR:
+
+| Model | Hardware | Time | Quality (PPL) |
+|-------|----------|------|---------------|
+| AR 1B | 1× L40S | ~3 days | Good |
+| AR 3B | 4× L40S | ~2 weeks | Very good |
+| AR 7B | 4× L40S | ~4-6 weeks | Excellent |
+
+The AR versions are **16× faster to train** for the same quality. This is the real reason diffusion LMs aren't replacing ARMs for training — and why the attention is on inference benefits.
+
+## What About MoE?
+
+You mentioned DiffusionGemma is 26B MoE with 4B active. What if you trained an MoE diffusion LM?
+
+**Good news**: MoE doesn't add much training FLOPs per token (most params are dormant).
+**Bad news**: MoE adds memory. All 26B experts must be loaded in memory, even if only 4B are active.
+
+- 26B MoE model states (FP32 master): 26B × 16 bytes = **416 GB**
+- Even with 4× L40S (192 GB total): you'd need **FSDP + offloading to CPU RAM**
+
+Your L40S nodes have 64 GB RAM each × 2 nodes = 128 GB CPU RAM. Even CPU offloading can't save a 416 GB model.
+
+**MoE diffusion LMs need A100 80GB clusters or TPU pods.**
+
+## The Bottom Line
+
+**Forget training a DiffusionGemma-class model.** The hardware gap is 2-3 orders of magnitude.
+
+**What IS realistic on 2×L40S nodes (4 GPUs):**
+
+| Model Size | Feasibility | Time | Use Case |
+|-----------|-------------|------|----------|
+| ≤300M | ✅ Practical | 2-3 days | Education, domain-specific LM |
+| 1B sub-optimal | ✅ Feasible | 1-2 weeks | Proof of concept |
+| 1B Chinchilla-optimal | ⚠️ Painful | 3-4 weeks | Research experiment |
+| 3B+ | ❌ Not worth | 6+ weeks | Quality too low for cost |
+
+**If you really want to train a diffusion LM that does something useful, the sweet spot is 300M-1B with domain-specific data (not general text).** That way the quality floor doesn't matter as much — you're optimizing for a narrow task where even "imperfect" generation is valuable.
+
+**Want to discuss what that would look like?** I can sketch a training recipe for, say, a 300M masked diffusion LM trained on Portuguese text — leveraging your language advantage rather than competing on raw scale.

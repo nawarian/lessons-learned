@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Diffusion LM Cost &amp; Hardware Specs</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  table { font-size: 0.85rem; }
+  td, th { padding: 0.4rem 0.6rem; }
+  h2 { margin-top: 1.5rem; }
+  .compact { margin-bottom: 0.5rem; }
+</style>
+</head>
+<body>
+
+<h1>Diffusion LM Cost &amp; Hardware Reference</h1>
+<p class="lesson-meta">Compressed reference for quick lookup. Print-friendly.</p>
+
+<h2>Published Training Costs</h2>
+<table>
+  <tr><th>Model</th><th>Params</th><th>Tokens</th><th>Hardware</th><th>GPU-hrs</th><th>Compute (FLOPs)</th></tr>
+  <tr><td>MDLM (base)</td><td>~110M</td><td>33B</td><td>4-8× A100</td><td>~hours</td><td>~10¹⁹</td></tr>
+  <tr><td>SEDD (small)</td><td>~90M</td><td>1BW*</td><td>4-8× A100</td><td>~hours</td><td>~10¹⁹</td></tr>
+  <tr><td>SEDD (medium)</td><td>~320M</td><td>OWT†</td><td>8× A100 80G</td><td>~days</td><td>~10²⁰</td></tr>
+  <tr><td>SMDM (largest)</td><td>1.1B</td><td>~540B</td><td>TinyLlama infra</td><td>~thousands</td><td>~3×10²¹</td></tr>
+  <tr><td><strong>LLaDA 8B</strong></td><td><strong>8B</strong></td><td><strong>2.3T</strong></td><td><strong>H800 cluster</strong></td><td><strong>130K</strong></td><td><strong>~10²³</strong></td></tr>
+  <tr><td>DiffusionGemma</td><td>26B MoE</td><td>not disclosed</td><td>TPU v5p</td><td>not disclosed</td><td>not disclosed</td></tr>
+</table>
+<p class="compact"><small>* One Billion Words dataset · † OpenWebText (~9B tokens)</small></p>
+
+<h2>Memory Requirements (VRAM)</h2>
+<table>
+  <tr><th>Model Size</th><th>FP32</th><th>BF16/FP16</th><th>INT8</th><th>INT4</th></tr>
+  <tr><td>100M</td><td>400 MB</td><td>200 MB</td><td>100 MB</td><td>50 MB</td></tr>
+  <tr><td>300M</td><td>1.2 GB</td><td>600 MB</td><td>300 MB</td><td>150 MB</td></tr>
+  <tr><td>1B</td><td>4 GB</td><td>2 GB</td><td>1 GB</td><td>500 MB</td></tr>
+  <tr><td>8B</td><td>32 GB</td><td>16 GB</td><td>8 GB</td><td>4 GB</td></tr>
+  <tr><td>26B MoE (4B active)</td><td>104 GB</td><td>52 GB</td><td>26 GB</td><td>13 GB</td></tr>
+</table>
+<p class="compact"><small>Weights only. Add ~20-50% for activations at inference. Add 2-4× for training (optimizer + grads). Diffusion LMs need <strong>no KV-cache</strong>.</small></p>
+
+<h2>Hardware Tiers &amp; What They Can Do</h2>
+<table>
+  <tr><th>Tier</th><th>GPU</th><th>VRAM</th><th>Train From Scratch</th><th>Inference</th><th>Fine‑tune</th></tr>
+  <tr><td>Your local</td><td>Consumer</td><td>8 GB</td><td>≤100M params</td><td>LLaDA 8B (4‑bit)</td><td>≤300M</td></tr>
+  <tr><td>Your cloud</td><td>L40S</td><td>48 GB</td><td>≤1B params</td><td>LLaDA 8B (BF16)<br>DiffusionGemma (4‑bit)</td><td>LLaDA 8B (LoRA)</td></tr>
+  <tr><td>Mid cluster</td><td>4-8× A100</td><td>320-640 GB</td><td>~7B params</td><td>Everything</td><td>Everything</td></tr>
+  <tr><td>SOTA cluster</td><td>H100/H800 pool</td><td>TB-class</td><td>Frontier models</td><td>Everything</td><td>Everything</td></tr>
+</table>
+
+<h2>Diffusion vs Autoregressive: Key Differences</h2>
+<table>
+  <tr><th>Dimension</th><th>Autoregressive</th><th>Diffusion</th></tr>
+  <tr><td>Training FLOPs (to same loss)</td><td>1× (baseline)</td><td><strong>16×</strong> (per SMDM)</td></tr>
+  <tr><td>Inference FLOPs (per sequence)</td><td>seq_len × cost_per_pass</td><td>steps × cost_per_pass</td></tr>
+  <tr><td>Inference parallelism</td><td>Sequential (token-by-token)</td><td>Parallel (all tokens each step)</td></tr>
+  <tr><td>KV-cache needed?</td><td>Yes (O(seq_len × d))</td><td><strong>No</strong></td></tr>
+  <tr><td>Sampling speed (1.1B model)</td><td>1× (baseline)</td><td><strong>1.4×</strong></td></tr>
+  <tr><td>Compute-quality tradeoff at inference</td><td>None (fixed cost)</td><td>Tunable (more steps = better)</td></tr>
+  <tr><td>Data efficiency</td><td>Higher</td><td>Lower (needs more tokens)</td></tr>
+  <tr><td>Controllable generation</td><td>Complex (prompt engineering)</td><td>Natural (gradient-guided)</td></tr>
+</table>
+
+<h2>Data Requirements (Chinchilla-Optimal)</h2>
+<table>
+  <tr><th>Model Size</th><th>Optimal Tokens</th><th>Storage</th><th>Example Dataset</th></tr>
+  <tr><td>100M</td><td>2B</td><td>~4 GB</td><td>Small subset of The Pile</td></tr>
+  <tr><td>300M</td><td>6B</td><td>~12 GB</td><td>OpenWebText (~9B)</td></tr>
+  <tr><td>1B</td><td>20B</td><td>~40 GB</td><td>SlimPajama subset</td></tr>
+  <tr><td>8B</td><td>164B</td><td>~320 GB</td><td>SlimPajama (627B total)</td></tr>
+</table>
+
+<h2>Estimated Training Times on Your L40S</h2>
+<table>
+  <tr><th>Model</th><th>Tokens</th><th>Batch Size</th><th>Estimated Time (L40S)</th></tr>
+  <tr><td>100M (character-level)</td><td>100M</td><td>32</td><td>~30 min</td></tr>
+  <tr><td>300M</td><td>2B</td><td>16</td><td>~2–4 days</td></tr>
+  <tr><td>1B (with activation ckpt)</td><td>5B</td><td>8</td><td>~2–3 weeks</td></tr>
+  <tr><td>1B (full Chinchilla)</td><td>20B</td><td>8</td><td>~2–3 months (good luck)</td></tr>
+</table>
+<p class="compact"><small>Estimates are rough upper bounds assuming ~40-60% MFU (model FLOPs utilization) on L40S. Real numbers depend on implementation quality.</small></p>
+
+<hr>
+<p><em>Last updated: July 2025. Sources: SMDM, LLaDA, SEDD, MDLM, DiffusionGemma papers/documentation.</em></p>
+
+</body>
+</html>

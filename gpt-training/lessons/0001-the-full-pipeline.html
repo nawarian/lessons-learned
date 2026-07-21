@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The Full Pipeline</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  pre { position: relative; }
+  .copy-btn {
+    position: absolute; top: .5rem; right: .5rem;
+    font-size: .75rem; padding: .2rem .6rem;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; opacity: .6;
+  }
+  .copy-btn:hover { opacity: 1; }
+  .stage { display: flex; gap: 1rem; align-items: flex-start; margin: 1.5rem 0; }
+  .stage-num { flex: 0 0 2.2rem; font-size: 1.2rem; font-weight: 700; color: var(--accent); }
+  .stage-body { flex: 1; }
+  .stage-body h3 { margin-top: 0; }
+  .pipeline-svg { max-width: 100%; margin: 1.5rem 0; }
+  .loss-plot { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin: 1rem 0; text-align: center; }
+  .loss-plot code { font-size: .85rem; white-space: pre; display: inline-block; text-align: left; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Lesson 1 · GPT Training from Scratch</p>
+<h1>The Full Pipeline</h1>
+<p class="subtitle">Watch a GPT train from end to end — then zoom in on each piece in later lessons.</p>
+
+<div class="card">
+<strong>The win:</strong> by the end of this lesson, you will have run a complete
+GPT training pipeline on real hardware and watched it go from random garbage to
+coherent text. Every piece you don't yet understand is the subject of the next
+lesson. You'll know where you are in the pipeline at all times.
+</div>
+
+<h2>The pipeline at 50,000 feet</h2>
+
+<p>
+Training a GPT involves exactly five stages. They happen in order, then the last
+two repeat thousands or millions of times:
+</p>
+
+<div class="pipeline-svg">
+<pre style="line-height: 1.6; font-size: .9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem;">
+  Raw text
+     │
+     ▼
+  ┌─────────────┐
+  │ ① Tokenizer  │  ← splits text into integer IDs
+  └──────┬──────┘
+         │
+         ▼
+  ┌──────────────┐
+  │ ② Embedding   │  ← maps IDs to high-dimensional vectors
+  └──────┬───────┘
+         │
+         ▼
+  ┌──────────────────┐
+  │ ③ Transformer    │  ← the "thinking" part — attention + feed-forward
+  │    Block(s)      │
+  └──────┬───────────┘
+         │
+         ▼
+  ┌──────────────┐
+  │ ④ Output Head  │  ← projects back to vocabulary-sized probabilities
+  └──────┬───────┘
+         │
+         ▼
+  ┌──────────────────┐
+  │ ⑤ Loss &amp; Update │  ← compare prediction to truth, adjust weights
+  └──────────────────┘
+         │
+         └──→ loop back to ③ for next token
+</pre>
+</div>
+
+<p>
+Stages ①–② run once (preprocessing). Stages ③–⑤ run for every single token,
+over and over. The "training loop" is just stages ③→④→⑤ repeated across your
+whole dataset, many times (epochs).
+</p>
+
+<h2>What each stage does (plain English)</h2>
+
+<div class="stage">
+  <div class="stage-num">①</div>
+  <div class="stage-body">
+    <h3>Tokenizer — text → integers</h3>
+    <p>
+    A tokenizer takes raw text and splits it into pieces (tokens), then maps each
+    piece to an integer ID. The simplest possible tokenizer is <em>character-level</em>:
+    "cat" → [3, 1, 20]. GPT-2/4 use <em>Byte-Pair Encoding</em> (BPE), which
+    learns the best split points from data. We'll use character-level for lesson 1
+    because it's trivially understandable.
+    </p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">②</div>
+  <div class="stage-body">
+    <h3>Embedding — integers → vectors</h3>
+    <p>
+    Each token ID (an integer) gets looked up in a table that returns a
+    high-dimensional vector, say 384 numbers. These numbers are <em>learned</em> —
+    they start random and get tuned during training. The embedding layer is the
+    model's way of saying "token #45 is <em>like</em> tokens #12 and #33 in these
+    ways."
+    </p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">③</div>
+  <div class="stage-body">
+    <h3>Transformer Block — the thinking</h3>
+    <p>
+    This is the core. The transformer block considers all tokens in the sequence
+    and lets them "talk to each other" via <strong>attention</strong> (which tokens
+    are relevant to each other) and then processes each position's result through a
+    <strong>feed-forward network</strong> (a small neural net applied position-by-position).
+    Stack multiple blocks (12, 24, 96 layers) and you get the model's reasoning depth.
+    </p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">④</div>
+  <div class="stage-body">
+    <h3>Output Head — vectors → token probabilities</h3>
+    <p>
+    The final transformer block's output is still a vector per position. The output
+    head projects that vector back into <em>vocabulary-sized</em> logits — one score
+    per possible next token. Softmax turns those scores into probabilities. The model
+    then samples from that distribution pick the next token.
+    </p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">⑤</div>
+  <div class="stage-body">
+    <h3>Loss &amp; Update — how the model learns</h3>
+    <p>
+    The model predicted a probability distribution over the next token. We know the
+    <em>actual</em> next token (from our training data). The <strong>loss</strong>
+    (cross-entropy) measures how surprised the model was. High loss = very surprised
+    = bad prediction. We then use <strong>backpropagation</strong> to compute, for
+    every single weight in the model, "which direction should I nudge this weight to
+    reduce the loss next time?" The optimizer (AdamW) applies those nudges.
+    </p>
+    <p>
+    That's it. That's the whole learning algorithm. The model improves token by token,
+    batch by batch, epoch by epoch.
+    </p>
+  </div>
+</div>
+
+<h2>Your tangible win: run it</h2>
+
+<p>
+Below is a complete, minimal GPT training script. Copy it to a file and run it.
+It will:
+</p>
+<ul>
+  <li>Use a character-level tokenizer on the complete works of Shakespeare (tiny by today's standards — ~5 MB)</li>
+  <li>Define a small GPT with 4 transformer blocks, 384-dimensional embeddings</li>
+  <li>Train for a few minutes on your L40S (or your 8 GB desktop, if you're patient)</li>
+  <li>Generate text at the end so you can see what the model learned</li>
+</ul>
+
+<div class="callout">
+<strong>Before you run:</strong> make sure you have PyTorch installed.
+<code>pip install torch</code> is all you need. If using the L40S, SSH in and
+run it there — it'll finish in 3–5 minutes.
+</div>
+
+<p style="margin-top:1.5rem">
+Save this as <code>train_gpt.py</code> and run with <code>python train_gpt.py</code>:
+</p>
+
+<pre id="script-block"><code>"""
+Minimal GPT trainer — Lesson 1 of the GPT training series.
+Trains a character-level GPT on a tiny slice of Shakespeare.
+"""
+import os, sys, time, math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+# ── Config ────────────────────────────────────────────────
+VOCAB_SIZE  = 65       # number of unique characters in our data
+EMBED_DIM   = 192      # size of each token's embedding vector
+NUM_HEADS   = 6        # number of attention heads
+NUM_LAYERS  = 4        # number of transformer blocks
+BLOCK_SIZE  = 128      # context length (tokens of history)
+BATCH_SIZE  = 64       # sequences per training step
+LR          = 3e-4
+EPOCHS      = 10
+EVAL_INTERVAL = 100    # steps between printing loss
+DEVICE      = "cuda" if torch.cuda.is_available() else "cpu"
+# ───────────────────────────────────────────────────────────
+
+
+# ── Data ──────────────────────────────────────────────────
+# Download a tiny slice of Shakespeare
+DATA_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+DATA_PATH = "tinyshakespeare.txt"
+
+if not os.path.exists(DATA_PATH):
+    print(f"Downloading {DATA_URL}...")
+    import urllib.request
+    urllib.request.urlretrieve(DATA_URL, DATA_PATH)
+
+with open(DATA_PATH, "r") as f:
+    text = f.read()
+
+# Build character-level tokenizer
+chars = sorted(list(set(text)))
+VOCAB_SIZE = len(chars)
+stoi = {ch: i for i, ch in enumerate(chars)}
+itos = {i: ch for i, ch in enumerate(chars)}
+
+def encode(s):
+    return [stoi[c] for c in s]
+
+def decode(ids):
+    return "".join(itos[i] for i in ids)
+
+# Split into train / val
+data = torch.tensor(encode(text), dtype=torch.long)
+split = int(0.9 * len(data))
+train_data, val_data = data[:split], data[split:]
+
+class CharDataset(Dataset):
+    def __init__(self, data, block_size):
+        self.data = data
+        self.block_size = block_size
+
+    def __len__(self):
+        return len(self.data) - self.block_size
+
+    def __getitem__(self, idx):
+        x = self.data[idx : idx + self.block_size]
+        y = self.data[idx + 1 : idx + self.block_size + 1]
+        return x, y
+
+train_ds = CharDataset(train_data, BLOCK_SIZE)
+val_ds   = CharDataset(val_data, BLOCK_SIZE)
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
+# ── Model ─────────────────────────────────────────────────
+
+class SelfAttention(nn.Module):
+    """One head of scaled dot-product attention."""
+    def __init__(self, embed_dim, head_size):
+        super().__init__()
+        self.key   = nn.Linear(embed_dim, head_size, bias=False)
+        self.query = nn.Linear(embed_dim, head_size, bias=False)
+        self.value = nn.Linear(embed_dim, head_size, bias=False)
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)
+        q = self.query(x)
+        v = self.value(x)
+        attn = q @ k.transpose(-2, -1) * (k.shape[-1] ** -0.5)
+        # causal mask — prevents attending to future tokens
+        mask = torch.tril(torch.ones(T, T, device=x.device)).view(1, T, T)
+        attn = attn.masked_fill(mask == 0, float("-inf"))
+        attn = F.softmax(attn, dim=-1)
+        return attn @ v
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super().__init__()
+        head_size = embed_dim // num_heads
+        self.heads = nn.ModuleList([SelfAttention(embed_dim, head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(embed_dim, embed_dim)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        return self.proj(out)
+
+class FeedForward(nn.Module):
+    def __init__(self, embed_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(embed_dim, 4 * embed_dim),
+            nn.GELU(),
+            nn.Linear(4 * embed_dim, embed_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class TransformerBlock(nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(embed_dim)
+        self.attn = MultiHeadAttention(embed_dim, num_heads)
+        self.ln2 = nn.LayerNorm(embed_dim)
+        self.ff = FeedForward(embed_dim)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.ff(self.ln2(x))
+        return x
+
+class GPT(nn.Module):
+    def __init__(self, vocab_size, embed_dim, num_heads, num_layers, block_size):
+        super().__init__()
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.pos_embedding   = nn.Embedding(block_size, embed_dim)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(embed_dim, num_heads) for _ in range(num_layers)
+        ])
+        self.ln_f = nn.LayerNorm(embed_dim)
+        self.head = nn.Linear(embed_dim, vocab_size)
+
+    def forward(self, x):
+        B, T = x.shape
+        tok_emb = self.token_embedding(x)
+        pos_emb = self.pos_embedding(torch.arange(T, device=x.device))
+        x = tok_emb + pos_emb
+        for block in self.blocks:
+            x = block(x)
+        x = self.ln_f(x)
+        return self.head(x)
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens=200):
+        """Generate text starting from idx (B, T) tensor."""
+        for _ in range(max_new_tokens):
+            # crop to block size
+            idx_cond = idx[:, -BLOCK_SIZE:]
+            logits = self(idx_cond)
+            logits = logits[:, -1, :]  # last time step only
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
+
+
+# ── Training ──────────────────────────────────────────────
+
+model = GPT(VOCAB_SIZE, EMBED_DIM, NUM_HEADS, NUM_LAYERS, BLOCK_SIZE).to(DEVICE)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+
+n_params = sum(p.numel() for p in model.parameters())
+print(f"Model has {n_params:,} parameters")
+print(f"Running on {DEVICE}")
+print()
+
+total_steps = 0
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    epoch_loss = 0.0
+    for x, y in train_loader:
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        logits = model(x)
+        loss = F.cross_entropy(logits.view(-1, VOCAB_SIZE), y.view(-1))
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        epoch_loss += loss.item()
+        total_steps += 1
+
+        if total_steps % EVAL_INTERVAL == 0:
+            model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for vx, vy in val_loader:
+                    vx, vy = vx.to(DEVICE), vy.to(DEVICE)
+                    vlogits = model(vx)
+                    vloss = F.cross_entropy(vlogits.view(-1, VOCAB_SIZE), vy.view(-1))
+                    val_loss += vloss.item()
+            val_loss /= len(val_loader)
+            print(f"step {total_steps:>5d} | train loss {epoch_loss:6.4f} | val loss {val_loss:6.4f}")
+            model.train()
+
+    avg_loss = epoch_loss / len(train_loader)
+    print(f"─── epoch {epoch}/{EPOCHS} complete | avg train loss {avg_loss:6.4f}")
+
+# ── Generation ────────────────────────────────────────────
+print("\n─── Generating ───")
+context = torch.zeros((1, 1), dtype=torch.long, device=DEVICE)
+output = model.generate(context, max_new_tokens=500)
+print(decode(output[0].tolist()))
+print("\n─── Done ───")
+</code></pre>
+
+<h2>What to watch for</h2>
+
+<p>When you run the script, pay attention to these signals:</p>
+
+<table>
+<thead><tr><th>Signal</th><th>What it tells you</th></tr></thead>
+<tbody>
+<tr>
+  <td>Loss starts high (~4.0+)</td>
+  <td>The model is predicting randomly — it hasn't learned anything yet.</td>
+</tr>
+<tr>
+  <td>Loss drops steadily</td>
+  <td>Learning is working. The model is less "surprised" by the next token.</td>
+</tr>
+<tr>
+  <td>Train loss &lt; val loss</td>
+  <td>Normal and expected. A small gap means healthy generalization.</td>
+</tr>
+<tr>
+  <td>Large train/val gap</td>
+  <td>Overfitting — the model memorized training data instead of learning patterns.</td>
+</tr>
+<tr>
+  <td>Generated text starts as garbage</td>
+  <td>Random weights → random output. Normal.</td>
+</tr>
+<tr>
+  <td>Generated text gets slightly coherent</td>
+  <td>By epoch 5–10 you should see real words and sentence-like structures.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>The drill</h2>
+
+<ol>
+  <li>Save the script as <code>train_gpt.py</code>.</li>
+  <li>Run it on your L40S (or desktop — it works on CPU but is slow).</li>
+  <li>Watch the loss values scroll by. Does the train/val gap stay small?</li>
+  <li>When generation finishes, read the output. Can you tell it's Shakespeare-like?</li>
+  <li>Come back and tell me what you observed — I'll explain what happened under the hood.</li>
+</ol>
+
+<div class="card" id="reflection" style="display:none">
+<strong>Post-run reflection:</strong>
+<p>Every number you saw has a meaning I can unpack. The loss values, the parameter count,
+  whether the model overfitted, the quality of the output — all of it tells a story
+  about what's happening inside those transformer blocks. Bring your observations to me.
+</p>
+</div>
+
+<h2>Where we go from here</h2>
+
+<p>This lesson is the only one where you run code you don't fully understand.
+Every subsequent lesson will zoom into one piece and make it yours:</p>
+
+<ol>
+  <li><strong>✓ The Full Pipeline</strong> — you are here</li>
+  <li><strong>The Tokenizer</strong> — how text becomes integers, from character-level to BPE</li>
+  <li><strong>Embeddings</strong> — what those vectors actually represent</li>
+  <li><strong>Attention</strong> — the mechanism that lets tokens talk to each other</li>
+  <li><strong>The Transformer Block</strong> — attention + feed-forward, end to end</li>
+  <li><strong>The Training Loop</strong> — loss, backpropagation, what the optimizer does</li>
+  <li><strong>From TinyGPT to Real Models</strong> — what changes as you scale up</li>
+</ol>
+
+<div class="ask">
+<strong>I'm your teacher — ask me anything.</strong> Run the script first, then come back
+with questions. What surprised you? What didn't make sense? What do you want to
+poke at first? Use me as a rubber duck, debugger companion, and explainer-on-demand.
+</div>
+
+<div class="callout">
+<strong>Primary source to read next:</strong> Andrej Karpathy's
+<a href="https://github.com/karpathy/nanoGPT">nanoGPT</a> repo (open the
+<code>model.py</code> file — it's the production version of the script above).
+Also his "<a href="https://www.youtube.com/watch?v=kCc8FvEb1nY">Let's build GPT</a>"
+video is the canonical walkthrough. Watch the first 20 minutes after running this
+lesson's script.
+</div>
+
+<div class="lesson-nav">
+<span>Lesson 1 of a series</span>
+<a href="#">→ Next: The Tokenizer</a>
+<span class="note">You are here: pipeline overview + first run.</span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+// No quiz for lesson 1 — the win is running the code and observing.
+// But we do show the reflection prompt.
+document.addEventListener("DOMContentLoaded", () => {
+  const scriptPre = document.getElementById("script-block");
+  const btn = document.createElement("button");
+  btn.className = "copy-btn";
+  btn.textContent = "📋 copy";
+  btn.onclick = async () => {
+    const code = scriptPre.querySelector("code").textContent;
+    await navigator.clipboard.writeText(code);
+    btn.textContent = "✓ copied";
+    setTimeout(() => { btn.textContent = "📋 copy"; }, 2000);
+  };
+  // Show reflection card when they scroll to bottom
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) document.getElementById("reflection").style.display = "block";
+    });
+  });
+  const reflection = document.getElementById("reflection");
+  if (reflection) observer.observe(reflection);
+});
+</script>
+</body>
+</html>

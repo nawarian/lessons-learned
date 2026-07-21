@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · The Training Step (Forward / Backward / Update)</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  dt { font-weight: 600; margin-top: .8rem; }
+  dd { margin-left: 1.2rem; }
+  .cycle { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.1rem; margin: 1.4rem 0; font-family: var(--mono); font-size: .8rem; line-height: 1.7; white-space: pre; overflow-x: auto; }
+  table code { font-size: .8em; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="cycleTheme()">◐ theme</button>
+
+<p class="kicker">Reference</p>
+<h1>The Training Step</h1>
+<p class="subtitle">Forward pass → loss → backward pass → update. The four moves that repeat every batch.</p>
+
+<h2>The cycle</h2>
+
+<div class="cycle">  forward pass        loss            backward pass         update
+  ───────────        ────            ─────────────         ──────
+  logits = model(x)   loss = F.       loss.backward()       optimizer.step()
+                      cross_entropy   ↓                     ↓
+  autograd records    (logits, y)     fills every           nudges every weight
+  the graph  ──────►  one scalar ───► p.grad with    ─────► opposite its grad
+                                      ∂loss/∂weight         (AdamW sets size)
+
+  └──────────────── repeat for every batch, every epoch ────────────────┘</div>
+
+<h2>The canonical loop body</h2>
+
+<pre><code>logits = model(x)                                   # forward pass
+loss   = F.cross_entropy(logits.view(-1, V), y.view(-1))
+optimizer.zero_grad()                               # clear stale gradients
+loss.backward()                                     # backward pass
+optimizer.step()                                    # update weights</code></pre>
+
+<p class="note">Order is fixed: forward → loss → zero_grad → backward → step. You can't grade an exam you never took, and you can't step before you know the direction.</p>
+
+<h2>Glossary</h2>
+
+<dl>
+  <dt>Forward pass (forward propagation)</dt>
+  <dd>Running input through the model to get a prediction. Defined in your <code>forward()</code> method. Side effect: autograd records the computation graph.</dd>
+
+  <dt><code>nn.Module</code></dt>
+  <dd>Base class for anything with learnable weights. Auto-registers parameters, handles <code>.to()</code>/<code>.train()</code>/<code>.eval()</code>, and wraps <code>forward()</code> in <code>__call__</code>.</dd>
+
+  <dt><code>model(x)</code> vs <code>model.forward(x)</code></dt>
+  <dd>Always use <code>model(x)</code>. It runs <code>__call__</code> (hooks + bookkeeping) and then your <code>forward()</code>. Calling <code>forward()</code> directly skips the wrapper.</dd>
+
+  <dt>Computation graph</dt>
+  <dd>The map autograd builds during the forward pass: which tensor came from which operation on which inputs. The trail <code>backward()</code> walks in reverse.</dd>
+
+  <dt>Logits</dt>
+  <dd>The raw output of <code>model(x)</code>: shape <code>(B, T, VOCAB_SIZE)</code> — one unbounded score per vocabulary entry, at every position. <strong>Not</strong> probabilities and <strong>not</strong> weights. Weights are the machinery; logits are what comes out of it.</dd>
+
+  <dt>Softmax</dt>
+  <dd>Turns a row of logits into a probability distribution (each in [0,1], summing to 1). Applied at inference (<code>generate()</code>); <code>cross_entropy</code> applies it internally during training.</dd>
+
+  <dt>Causal mask</dt>
+  <dd>The <code>torch.tril</code> triangular mask in attention that blinds each position to its future. Lets one forward pass predict the next char at <em>every</em> position in parallel without any position peeking at its own answer.</dd>
+
+  <dt>Teacher forcing</dt>
+  <dd>Training trick: feed the true sequence and predict each next char in parallel (targets = inputs shifted left by one). Possible only in training, where answers are known; generation runs one position at a time.</dd>
+
+  <dt>Loss</dt>
+  <dd>A single scalar measuring how wrong the predictions are. The root of the graph and the quantity we minimize. Here: cross-entropy over all <code>B×T</code> positions.</dd>
+
+  <dt>Backward pass (backpropagation)</dt>
+  <dd><code>loss.backward()</code> — walks the graph in reverse, applying the chain rule, to fill each <code>p.grad</code>. Computes directions only; changes no weights.</dd>
+
+  <dt>Gradient (<code>p.grad</code>)</dt>
+  <dd>∂loss/∂weight: how much, and in which direction, the loss responds to nudging that weight. An arrow pointing uphill on the loss landscape.</dd>
+
+  <dt><code>optimizer.zero_grad()</code></dt>
+  <dd>Clears <code>.grad</code> before the backward pass. PyTorch <em>accumulates</em> gradients by default; skip this and stale gradients pile up.</dd>
+
+  <dt><code>optimizer.step()</code></dt>
+  <dd>Applies the update: each weight moves opposite its gradient. The optimizer (AdamW) sets the actual step size using the learning rate, momentum, and per-weight scaling.</dd>
+
+  <dt><code>torch.no_grad()</code></dt>
+  <dd>Context manager that switches off graph recording. Use during inference/generation and validation — you don't need gradients there, and skipping them saves memory and time.</dd>
+</dl>
+
+<h2>Common pitfalls</h2>
+
+<table>
+<thead><tr><th>Symptom</th><th>Likely cause</th></tr></thead>
+<tbody>
+<tr><td><code>p.grad</code> is <code>None</code></td><td>You looked before <code>backward()</code> ran, or used <code>torch.no_grad()</code>.</td></tr>
+<tr><td>Loss erratic / diverging</td><td>Missing <code>optimizer.zero_grad()</code> — gradients accumulating across steps.</td></tr>
+<tr><td>No learning at all</td><td>Forgot <code>optimizer.step()</code>, or the optimizer never got <code>model.parameters()</code>.</td></tr>
+<tr><td>"element 0 ... does not require grad"</td><td>Calling <code>backward()</code> inside a <code>no_grad()</code> block, or on a detached tensor.</td></tr>
+</tbody>
+</table>
+
+<div class="lesson-nav">
+<a href="../lessons/0002-forward-and-backward.html">← Lesson 2: Forward &amp; Backward</a>
+<a href="pipeline-cheatsheet.html">→ Pipeline cheat sheet</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
