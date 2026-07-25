@@ -758,32 +758,23 @@ print(f"Forward pass: ✅")</pre>
 
 <h2>Step 5: 🎓 Load the Teacher (LLaDA 8B)</h2>
 
-<p><strong>Goal:</strong> Load LLaDA 8B in 4-bit quantization and verify it runs on your L40S. This model generates the soft targets for distillation.</p>
+<p><strong>Goal:</strong> Load LLaDA 8B in BF16 and verify it runs on your L40S (48 GB). This model generates the soft targets for distillation.</p>
 
 <div class="code-block">
   <div class="filename">05_setup_teacher.py</div>
   <pre>"""
-Load LLaDA 8B in 4-bit and verify inference works.
+Load LLaDA 8B in BF16 and verify inference works.
 Usage: python 05_setup_teacher.py
-VRAM: ~5 GB (NF4), ~16 GB (BF16)
+VRAM: ~16 GB (BF16)
 """
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model_name = "ML-GSAI/LLaDA-8B"
 
-# 4-bit quantization config
-quant = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
-    bnb_4bit_quant_type="nf4",
-)
-
-print(f"Loading LLaDA 8B in 4-bit...")
+print(f"Loading LLaDA 8B in BF16...")
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
-    quantization_config=quant,
     torch_dtype=torch.bfloat16,
     device_map="auto",
     trust_remote_code=True,
@@ -829,7 +820,7 @@ Training loop:
 1. Sample a batch of token sequences from shards
 2. Randomly mask a subset of tokens (noise level t)
 3. Forward pass through student (predict masked tokens)
-4. Forward pass through teacher (4-bit, no grad) — soft targets
+4. Forward pass through teacher (BF16, no grad) — soft targets
 5. Loss = α * KL(student_logits || teacher_logits) + (1-α) * L_diffusion
 6. Backprop through student only
 """
@@ -838,7 +829,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset
 import numpy as np
-from transformers import AutoModel, BitsAndBytesConfig
+from transformers import AutoModel
 from tokenizers import Tokenizer
 
 from config import MDLMConfig
@@ -896,17 +887,10 @@ def train():
     student = MDLM(config).to(device)
     print(f"Student params: {sum(p.numel() for p in student.parameters()):,}")
 
-    # Teacher (4-bit)
-    print("Loading teacher (LLaDA 8B, 4-bit)...")
-    quant = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-    )
+    # Teacher (BF16)
+    print("Loading teacher (LLaDA 8B, BF16)...")
     teacher = AutoModel.from_pretrained(
         config.teacher_name,
-        quantization_config=quant,
         torch_dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True,
@@ -1032,8 +1016,9 @@ if __name__ == "__main__":
 <table>
   <tr><th>Metric</th><th>Value</th></tr>
   <tr><td>Student params</td><td>~321M</td></tr>
-  <tr><td>Teacher params (4-bit)</td><td>8B (~5 GB VRAM)</td></tr>
-  <tr><td>VRAM (student + teacher + acts)</td><td>~8-10 GB (Adafactor + grad ckpt)</td></tr>
+  <tr><td>Teacher params (BF16)</td><td>8B (~16 GB VRAM)</td></tr>
+  <tr><td>VRAM (student + teacher + acts)</td><td>~21 GB (Adafactor + grad ckpt)</td></tr>
+  <tr><td>VRAM headroom (L40S 48 GB)</td><td>~27 GB — room for larger batch, longer sequences, or caching teacher logits offline</td></tr>
   <tr><td>Throughput (L40S)</td><td>~9,000-10,000 tok/s</td></tr>
   <tr><td>Steps</td><td>50,000</td></tr>
   <tr><td>Effective tokens seen</td><td>50K × 2 (batch) × 8K (seq) = ~800M</td></tr>
@@ -1045,7 +1030,7 @@ if __name__ == "__main__":
   <ol>
     <li><strong>Gradient checkpointing:</strong> Add <code>student.gradient_checkpointing_enable()</code> after creating the student — trades ~20% compute for ~40% less activation memory.</li>
     <li><strong>Smaller batch size:</strong> Drop to batch_size=1, double grad_accum_steps to 16. Same effective batch, half the peak VRAM.</li>
-    <li><strong>Cache teacher logits offline:</strong> Run teacher once on the entire dataset, save logits, then train student without teacher in memory. Saves ~5 GB VRAM but requires ~5-10 GB disk.</li>
+    <li><strong>Cache teacher logits offline:</strong> Run teacher once on the entire dataset, save logits, then train student without teacher in memory. Frees the full ~16 GB teacher weights from VRAM — useful if you want to train at higher batch sizes or on a smaller GPU.</li>
   </ol>
 </div>
 
@@ -1325,23 +1310,23 @@ if __name__ == "__main__":
 </div>
 
 <div class="quiz">
-  <div class="quiz-question">3. Why is the teacher loaded in 4-bit (NF4) instead of BF16?</div>
+  <div class="quiz-question">3. Why can the teacher be loaded in BF16 instead of 4-bit on the L40S?</div>
   <div class="quiz-options" id="q3opts">
     <label class="quiz-option">
       <input type="radio" name="q3" value="a">
-      4-bit is faster for inference
+      The teacher needs gradient updates, so BF16 is required for backprop
     </label>
     <label class="quiz-option">
       <input type="radio" name="q3" value="b">
-      8B parameters × 2 bytes (BF16) = 16 GB, which doesn't fit alongside the student + activations in VRAM. 4-bit = ~5 GB, leaving room for training.
+      LLaDA 8B in BF16 = 16 GB. Student + optimizer + acts = ~5 GB. Total = ~21 GB — well within the L40S's 48 GB. No need for quantization, and BF16 preserves full teacher logit quality.
     </label>
     <label class="quiz-option">
       <input type="radio" name="q3" value="c">
-      The teacher doesn't need gradient updates, so lower precision is fine
+      Because 4-bit quantization is not supported for diffusion models
     </label>
     <label class="quiz-option">
       <input type="radio" name="q3" value="d">
-      Hugging Face only supports LLaDA 8B in 4-bit
+      BF16 is faster than 4-bit for inference
     </label>
   </div>
   <div class="quiz-feedback" id="q3fb"></div>
@@ -1423,8 +1408,8 @@ if __name__ == "__main__":
     },
     q3: {
       answer: 'b',
-      correct: '✅ Right! 8B × 2B = 16 GB in BF16, plus the 321M student (~3 GB with optimizer), plus activations (~2 GB) = ~21 GB. That fits on 48 GB — but 4-bit gives you headroom for larger batches or longer sequences.',
-      wrong: '❌ The question is about VRAM budgeting. How much does each component cost at different precisions?'
+      correct: '✅ Exactly! Teacher (16 GB) + student + optimizer + acts (~5 GB) = ~21 GB total. The L40S has 48 GB — almost 2.5× what we need. Quantization would only add noise to the teacher logits and complexity to the code, with no benefit.'
+      wrong: '❌ Think about the total VRAM budget. Teacher in BF16 = 16 GB. How much room is left in a 48 GB card?'
     },
     q4: {
       answer: 'b',
@@ -1433,8 +1418,8 @@ if __name__ == "__main__":
     },
     q5: {
       answer: 'a',
-      correct: '✅ Correct! From Lesson 0007: 300M inference = ~1.1 GB VRAM (fits anywhere). Training from scratch = ~3.3 GB with Adafactor (fits on both 6 GB and 8 GB). Distillation (with teacher in 4-bit) needs ~8-10 GB, which fits on L40S but not locally.',
-      wrong: '❌ Recall the VRAM numbers from Lesson 0007 — inference is lightweight, and training 300M from scratch fits on consumer GPUs with the right optimizer.'
+      correct: '✅ Correct! From Lesson 0007: 300M inference = ~1.1 GB VRAM (fits anywhere). Training from scratch = ~3.3 GB with Adafactor (fits on both 6 GB and 8 GB). Distillation needs both teacher (16 GB) and student (~5 GB) in VRAM at once = ~21 GB, which only fits on the L40S (48 GB).'
+      wrong: '❌ Inference is cheap (<1 GB). Training from scratch fits (~3.3 GB). But distillation keeps both models in VRAM — the teacher alone is 16 GB in BF16.'
     }
   };
 
