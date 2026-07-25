@@ -13,6 +13,7 @@ reason for learning it), backed by **reference** cheat sheets you return to late
 | [`intelbras-ews410/`](./intelbras-ews410/) | Control the Intelbras EWS 410 lamp **locally** so an agentic harness can change the lights on prompt. | Lesson 1 (in progress) |
 | [`crdts/`](./crdts/) | Grok CRDTs well enough to reason about a p2p, offline-first collaborative whiteboard the harness is building. | Lesson 1 (in progress) |
 | [`gpt-training/`](./gpt-training/) | Train a GPT from scratch, then fine-tune open-weight models for agentic coding in pt-br. | Lesson 1 (just started) |
+| [`diffusion-lm/`](./diffusion-lm/) | Understand, train, and fine-tune diffusion-based language models for text generation on Brazilian hardware (L40S). Build a 300M distilled MDLM for Portuguese + English + agentic coding. | 8 lessons (complete) 🏁 |
 
 ## How each topic folder is organized
 

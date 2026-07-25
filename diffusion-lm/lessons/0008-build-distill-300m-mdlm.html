@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0008: 🔨 Build — Distill a 300M MDLM from LLaDA 8B</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+  }
+  .code-block .filename {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .code-block pre {
+    margin-bottom: 0;
+    background: none;
+    padding: 0;
+  }
+  .pipeline-flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--blockquote-bg);
+    font-size: 0.85rem;
+  }
+  .pipeline-flow .step {
+    padding: 0.4rem 0.8rem;
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    background: var(--code-bg);
+    text-align: center;
+    min-width: 6rem;
+  }
+  .pipeline-flow .step.done { border-color: var(--success); opacity: 0.6; }
+  .pipeline-flow .step.active { border-color: var(--accent); background: rgba(37, 99, 235, 0.1); }
+  .pipeline-flow .arrow { color: var(--text-secondary); font-size: 1.2rem; }
+
+  .config-table td:first-child { font-weight: 600; font-family: var(--font-mono); font-size: 0.85rem; }
+
+  .file-tree { font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.8; }
+  .file-tree .dir { color: var(--accent); }
+  .file-tree .file { color: var(--text); }
+  .file-tree .indent { padding-left: 1.5rem; }
+  .file-tree .indent2 { padding-left: 3rem; }
+
+  .cmd { background: #1a1a1a; color: #e0e0e0; padding: 0.15em 0.4em; border-radius: 3px; font-family: var(--font-mono); font-size: 0.85em; }
+
+  @media (max-width: 560px) {
+    .pipeline-flow { flex-direction: column; }
+    .pipeline-flow .arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>🔨 Lesson 0008: Build — Distill a 300M MDLM from LLaDA 8B</h1>
+  <p class="lesson-meta">Estimated time: 40 min · Prerequisites: Lessons 0001-0007, L40S with ~100 GB disk</p>
+  <nav class="lesson-nav">
+    <a href="0007-scaling-laws-build-decision.html">← Scaling Laws & Build Decision</a>
+    <a href="../reference/cost-and-hardware.html">Cost Reference →</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — This is the build lesson. We take everything from lessons 0001-0007 and turn it into working code. By the end, you'll have a complete pipeline that downloads ~1B tokens of Portuguese, English, code, and agentic trace data → trains a BPE tokenizer → sets up LLaDA 8B as teacher → distills into a 300M MDLM student. Estimated run time on your L40S: <strong>~1.2 days for distillation</strong>, ~3-4 hours for data prep + tokenizer. Every step is runnable.
+</blockquote>
+
+<!-- ============================================================ -->
+<!-- OVERVIEW -->
+<!-- ============================================================ -->
+
+<h2>📋 Pipeline Overview</h2>
+
+<p>The full build pipeline in one diagram:</p>
+
+<div class="pipeline-flow">
+  <div class="step done">① Collect Data</div>
+  <span class="arrow">→</span>
+  <div class="step">② Train Tokenizer</div>
+  <span class="arrow">→</span>
+  <div class="step">③ Tokenize &amp; Shard</div>
+  <span class="arrow">→</span>
+  <div class="step">④ Build Student</div>
+  <span class="arrow">→</span>
+  <div class="step">⑤ Load Teacher</div>
+  <span class="arrow">→</span>
+  <div class="step active">⑥ Distill</div>
+  <span class="arrow">→</span>
+  <div class="step">⑦ Evaluate</div>
+</div>
+
+<h3>Project Structure</h3>
+
+<p>Everything lives in one directory. Here's the final layout:</p>
+
+<div class="file-tree">
+  <span class="dir">tupi-mdlm/</span>
+  <div class="indent">
+    <span class="file">01_collect_data.py</span><br>
+    <span class="file">02_train_tokenizer.py</span><br>
+    <span class="file">03_tokenize_shard.py</span><br>
+    <span class="file">04_build_student.py</span><br>
+    <span class="file">05_setup_teacher.py</span><br>
+    <span class="file">06_distill.py</span><br>
+    <span class="file">07_evaluate.py</span><br>
+    <span class="file">generate.py</span><br>
+    <span class="file">model.py</span>  ← the student architecture<br>
+    <span class="file">config.py</span>  ← all hyperparameters<br>
+    <br>
+    <span class="dir">data/</span>
+    <div class="indent">
+      <span class="file">raw/</span>  ← downloaded text (gitignored)<br>
+      <span class="file">tokenizer.json</span>  ← trained BPE tokenizer<br>
+      <span class="file">train/</span>  ← tokenized .bin shards<br>
+    </div>
+    <span class="dir">checkpoints/</span>
+    <div class="indent">
+      <span class="file">student/</span>  ← distilled model weights<br>
+      <span class="file">teacher_logits/</span>  ← cached soft targets<br>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- STEP 1: DATA COLLECTION -->
+<!-- ============================================================ -->
+
+<h2>Step 1: 📥 Collect the Data</h2>
+
+<p><strong>Goal:</strong> Download ~1B tokens of mixed text to <code>data/raw/</code> as plain UTF-8 text files.</p>
+
+<p>Each dataset has a different schema. We normalize everything to plain text — one line per document/session. This is the only script that needs internet access.</p>
+
+<div class="code-block">
+  <div class="filename">01_collect_data.py</div>
+  <pre>"""
+Download and normalize all data sources into data/raw/.
+Usage: python 01_collect_data.py
+Disk needed: ~2-3 GB for raw text
+"""
+import os, json
+from datasets import load_dataset
+from tqdm import tqdm
+
+os.makedirs("data/raw", exist_ok=True)
+
+# ── 1. FineWeb-Edu (English, 400M tokens ≈ 50K samples) ──
+print("[1/4] Downloading FineWeb-Edu (English)...")
+en = load_dataset("HuggingFaceFW/fineweb-edu", split="train", streaming=True)
+with open("data/raw/en.txt", "w", encoding="utf-8") as f:
+    for i, row in tqdm(en.shuffle(seed=42).take(50_000), desc="FineWeb"):
+        f.write(row["text"].strip() + "\n")
+
+# ── 2. CulturaX (Portuguese, 250M tokens ≈ 30K samples) ──
+print("[2/4] Downloading CulturaX (Portuguese)...")
+cx = load_dataset("uonlp/CulturaX", split="train", streaming=True)
+pt = cx.filter(lambda x: x["language"] == "pt")
+with open("data/raw/pt.txt", "w", encoding="utf-8") as f:
+    for i, row in tqdm(pt.shuffle(seed=42).take(30_000), desc="CulturaX"):
+        f.write(row["text"].strip() + "\n")
+
+# ── 3. The Stack (Code, 150M tokens ≈ 15K samples) ──
+print("[3/4] Downloading The Stack (Code)...")
+stack = load_dataset("bigcode/the-stack-dedup", split="train", streaming=True)
+langs = ["python", "typescript", "javascript", "rust", "go", "java", "shell", "lua"]
+code = stack.filter(lambda x: x.get("lang", "") in langs)
+with open("data/raw/code.txt", "w", encoding="utf-8") as f:
+    for i, row in tqdm(code.shuffle(seed=42).take(15_000), desc="TheStack"):
+        f.write(row["content"].strip() + "\n")
+
+# ── 4. Agentic Traces (200M tokens, full dataset) ──
+print("[4/4] Downloading Agentic Traces...")
+agent = load_dataset("MaxDevv/real-pi-coding-agent-traces-sessions", split="train")
+with open("data/raw/agent.txt", "w", encoding="utf-8") as f:
+    for session in tqdm(agent, desc="Agent"):
+        # Each session is a list of JSON events (pi format)
+        # Reconstruct the conversation as plain text
+        lines = []
+        for event in session["events"]:
+            if event["type"] == "message":
+                role = event["message"]["role"]
+                for part in event["message"]["content"]:
+                    if part["type"] == "text":
+                        lines.append(f"&lt;|{role}|&gt; {part['text']}")
+                    elif part["type"] in ("bash", "read", "write", "edit"):
+                        cmd = part.get("command") or part.get("path") or ""
+                        lines.append(f"&lt;|tool|&gt; {part['type']}: {cmd}")
+        f.write("\n".join(lines) + "\n\n---END OF SESSION---\n\n")
+
+print("Done! Files:")
+for fn in os.listdir("data/raw"):
+    size = os.path.getsize(f"data/raw/{fn}") / 1e6
+    print(f"  {fn}: {size:.1f} MB")</pre>
+</div>
+
+<div class="callout callout-info">
+  <strong>Run time:</strong> ~1-2 hours (download speed dependent). Most of the time is spent on The Stack and CulturaX filtering — the streaming API needs to scan shards to find matching records. FineWeb-Edu and Agentic traces are faster since they don't need language filtering.
+</div>
+
+<div class="callout callout-warning">
+  <strong>Token count note:</strong> "50K samples" is a rough heuristic. FineWeb-Edu samples average ~8K tokens each (they're full web pages). CulturaX samples average ~8-10K tokens. The exact token count depends on the tokenizer. After tokenizer training in Step 2, verify with <code>wc -c data/raw/*.txt</code> and adjust take(N) if needed.
+</div>
+
+<!-- ============================================================ -->
+<!-- STEP 2: TRAIN TOKENIZER -->
+<!-- ============================================================ -->
+
+<h2>Step 2: 🏗️ Train the BPE Tokenizer</h2>
+
+<p><strong>Goal:</strong> Train a 32,768-vocabulary BPE tokenizer on all four data sources combined. This runs locally on your GPU machine (low compute).</p>
+
+<div class="code-block">
+  <div class="filename">02_train_tokenizer.py</div>
+  <pre>"""
+Train a BPE tokenizer on the mixed corpus.
+Usage: python 02_train_tokenizer.py
+Output: data/tokenizer.json (~4 MB)
+"""
+from tokenizers import Tokenizer, models, trainers, pre_tokenizers, processors
+
+files = ["data/raw/en.txt", "data/raw/pt.txt",
+         "data/raw/code.txt", "data/raw/agent.txt"]
+
+tokenizer = Tokenizer(models.BPE())
+tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+
+trainer = trainers.BpeTrainer(
+    vocab_size=32_768,
+    min_frequency=2,
+    special_tokens=["[PAD]", "[MASK]", "[UNK]", "[BOS]", "[EOS]"],
+    show_progress=True,
+)
+
+tokenizer.train(files, trainer)
+
+# Add post-processor: wrap in [BOS]...[EOS] tokens
+tokenizer.post_processor = processors.TemplateProcessing(
+    single="[BOS] $A [EOS]",
+    pair="[BOS] $A [EOS] $B:1 [EOS]:1",
+    special_tokens=[
+        ("[BOS]", tokenizer.token_to_id("[BOS]")),
+        ("[EOS]", tokenizer.token_to_id("[EOS]")),
+    ],
+)
+
+tokenizer.save("data/tokenizer.json")
+print(f"Vocab size: {tokenizer.get_vocab_size()}")
+print(f"Saved to data/tokenizer.json")
+
+# Test it
+test_texts = [
+    "Hello, world! This is a test in English.",
+    "Olá, mundo! Este é um teste em Português.",
+    "def hello(name: str) -> str:\n    return f'Hello, {name}'",
+]
+for t in test_texts:
+    enc = tokenizer.encode(t)
+    dec = tokenizer.decode(enc.ids)
+    print(f"\nInput:  {t[:60]}")
+    print(f"Tokens: {enc.tokens[:20]}... ({len(enc.ids)} tokens)")
+    print(f"Roundtrip: {'✅' if dec == t else '❌'}")</pre>
+</div>
+
+<div class="callout callout-success">
+  <strong>Why ByteLevel pre-tokenizer?</strong> ByteLevel handles all Unicode (Portuguese accents, code symbols) without needing a separate normalization step. It also ensures that any byte sequence can be represented — no out-of-vocabulary tokens for code.
+</div>
+
+<!-- ============================================================ -->
+<!-- STEP 3: TOKENIZE AND SHARD -->
+<!-- ============================================================ -->
+
+<h2>Step 3: 📦 Tokenize and Shard</h2>
+
+<p><strong>Goal:</strong> Convert raw text to binary <code>.bin</code> shards — uint16 token IDs. This format is fast to load during training (no parsing, just <code>mmap</code>).</p>
+
+<div class="code-block">
+  <div class="filename">03_tokenize_shard.py</div>
+  <pre>"""
+Tokenize all raw text files and save as binary shards.
+Usage: python 03_tokenize_shard.py
+Output: data/train/*.bin (uint16 token IDs)
+
+Each shard is a flat array of uint16 values:
+  [n_tokens] followed by the token IDs.
+Header-free — just raw uint16s.
+"""
+import os, json, mmap
+import numpy as np
+from tokenizers import Tokenizer
+from tqdm import tqdm
+
+tokenizer = Tokenizer.from_file("data/tokenizer.json")
+os.makedirs("data/train", exist_ok=True)
+
+TOKENS_PER_SHARD = 50_000_000  # 50M tokens per shard (~100 MB per shard)
+MASK_ID = tokenizer.token_to_id("[MASK]")
+
+input_files = ["data/raw/en.txt", "data/raw/pt.txt",
+               "data/raw/code.txt", "data/raw/agent.txt"]
+
+all_tokens = []
+for fn in input_files:
+    if not os.path.exists(fn):
+        print(f"Skipping {fn} (not found)")
+        continue
+    print(f"Tokenizing {fn}...")
+    with open(fn, "r", encoding="utf-8") as f:
+        for line in tqdm(f, desc=os.path.basename(fn)):
+            line = line.strip()
+            if not line:
+                continue
+            ids = tokenizer.encode(line).ids
+            all_tokens.extend(ids)
+
+    # Flush shards periodically to avoid OOM
+    while len(all_tokens) >= TOKENS_PER_SHARD:
+        shard = all_tokens[:TOKENS_PER_SHARD]
+        all_tokens = all_tokens[TOKENS_PER_SHARD:]
+        shard_id = len(os.listdir("data/train"))
+        arr = np.array(shard, dtype=np.uint16)
+        arr.tofile(f"data/train/shard_{shard_id:04d}.bin")
+
+# Flush remaining
+if all_tokens:
+    shard_id = len(os.listdir("data/train"))
+    arr = np.array(all_tokens, dtype=np.uint16)
+    arr.tofile(f"data/train/shard_{shard_id:04d}.bin")
+
+print(f"\nDone! Created {len([f for f in os.listdir('data/train') if f.endswith('.bin')])} shards")
+total = sum(os.path.getsize(f"data/train/{f}") for f in os.listdir("data/train") if f.endswith(".bin"))
+print(f"Total tokens: {total // 2:,} ({(total / 1e9):.2f} GB)")</pre>
+</div>
+
+<p>Expected output: <strong>~20 shards × 50M tokens = ~1B tokens, ~2 GB on disk.</strong></p>
+
+<!-- ============================================================ -->
+<!-- STEP 4: STUDENT ARCHITECTURE -->
+<!-- ============================================================ -->
+
+<h2>Step 4: 🧠 Build the Student (300M MDLM)</h2>
+
+<p><strong>Goal:</strong> Implement the student architecture. This is your tiny MDLM from Lesson 0005, scaled up. We'll split into two files: <code>config.py</code> and <code>model.py</code>.</p>
+
+<h3>4a. Configuration</h3>
+
+<div class="code-block">
+  <div class="filename">config.py</div>
+  <pre>"""
+Hyperparameters for the 300M MDLM student.
+"""
+from dataclasses import dataclass, field
+from typing import Optional
+
+@dataclass
+class MDLMConfig:
+    # Architecture
+    vocab_size: int = 32_768
+    d_model: int = 1024
+    n_layers: int = 20
+    n_heads: int = 16
+    d_ff: int = 4_096          # 4× d_model
+    max_seq_len: int = 8_192
+    dropout: float = 0.0
+    bias: bool = False         # No bias in linear layers (modern practice)
+
+    # Position encoding
+    rope_theta: float = 10_000.0
+
+    # Time conditioning
+    time_dim: int = 256        # Sinusoidal → MLP hidden dim
+
+    # Noise schedule
+    schedule_type: str = "cosine"  # 'cosine' or 'linear'
+
+    # Training
+    batch_size: int = 2        # Per GPU (adjust based on VRAM)
+    grad_accum_steps: int = 8  # Effective batch = 2 × 8 = 16
+    learning_rate: float = 3e-4
+    lr_warmup_steps: int = 1_000
+    max_steps: int = 50_000
+    optimizer: str = "adafactor"  # Adafactor to save VRAM
+
+    # Distillation
+    distill_alpha: float = 0.5    # Weight for distillation loss
+    distill_alpha_decay: bool = True  # Decay α → 0 over training (pure diffusion at end)
+    teacher_kl_temperature: float = 2.0  # Soften teacher logits
+
+    # Paths
+    tokenizer_path: str = "data/tokenizer.json"
+    data_dir: str = "data/train"
+    teacher_name: str = "ML-GSAI/LLaDA-8B"
+    checkpoint_dir: str = "checkpoints/student"
+
+    @property
+    def total_params(self) -> int:
+        """Rough parameter count."""
+        emb = self.vocab_size * self.d_model
+        head = self.d_model * self.vocab_size
+        per_layer = 4 * self.d_model**2 + 2 * self.d_model * self.d_ff
+        time_mlp = 2 * self.time_dim * self.d_model
+        return emb + self.n_layers * per_layer + head + time_mlp</pre>
+</div>
+
+<h3>4b. Model</h3>
+
+<div class="code-block">
+  <div class="filename">model.py</div>
+  <pre>"""
+300M Masked Diffusion Language Model (student).
+Same architecture as your tiny MDLM from Lesson 0005, scaled up:
+  - RoPE position encoding (instead of learned absolute)
+  - adaLN time conditioning
+  - Pre-norm transformer encoder
+  - Cosine noise schedule
+
+Usage:
+    from model import MDLM, MDLMConfig
+    model = MDLM(config)
+"""
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchtyping import TensorType
+
+# ── Rotary Position Embedding ──
+
+class RotaryEmbedding(nn.Module):
+    """RoPE from Lesson 0006. No learned params."""
+    def __init__(self, dim: int, theta: float = 10_000.0):
+        super().__init__()
+        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+
+    def forward(self, seq_len: int, device: torch.device):
+        t = torch.arange(seq_len, device=device)
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        return torch.cat([freqs.sin(), freqs.cos()], dim=-1)  # [L, d]
+
+def apply_rotary(x: TensorType["B", "L", "n_h", "d_h"],
+                 cos: TensorType["L", "d_h"], sin: TensorType["L", "d_h"]):
+    """Rotate queries/keys by RoPE."""
+    d_h = x.shape[-1]
+    x1, x2 = x[..., :d_h//2], x[..., d_h//2:]
+    cos = cos[:x.shape[1], None, :]
+    sin = sin[:x.shape[1], None, :]
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+
+
+# ── Time Embedding ──
+
+class TimeEmbedding(nn.Module):
+    """Sinusoidal embedding → MLP → scale + shift vectors for adaLN."""
+    def __init__(self, d_model: int, time_dim: int = 256):
+        super().__init__()
+        self.time_dim = time_dim
+        # MLP: time_dim → d_model × 2 (scale + shift per block)
+        self.net = nn.Sequential(
+            nn.Linear(time_dim, d_model * 4),
+            nn.SiLU(),
+            nn.Linear(d_model * 4, d_model * 2),
+        )
+
+    def forward(self, t: TensorType["B"]) -> TensorType["B", "d_model*2"]:
+        # t: [B] — noise level in [0, 1]
+        # Sinusoidal encoding
+        half_dim = self.time_dim // 2
+        emb = math.log(10_000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=t.device) * -emb)
+        s = t.unsqueeze(-1) * emb.unsqueeze(0)  # [B, half_dim]
+        emb = torch.cat([s.sin(), s.cos()], dim=-1)  # [B, time_dim]
+        return self.net(emb)  # [B, d_model * 2]
+
+
+# ── AdaLN Modulation ──
+
+class AdaLN(nn.Module):
+    """Adaptive LayerNorm modulated by time embedding."""
+    def __init__(self, d_model: int):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model, elementwise_affine=False)
+
+    def forward(self, x: TensorType["B", "L", "d"],
+                scale_shift: TensorType["B", "d*2"]):
+        scale, shift = scale_shift.chunk(2, dim=-1)  # [B, d], [B, d]
+        x = self.norm(x)
+        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+
+# ── Transformer Block ──
+
+class TransformerBlock(nn.Module):
+    """Pre-norm encoder block with adaLN modulation."""
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.ada_attn = AdaLN(d_model)
+        self.attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True, bias=False)
+        self.ada_ffn = AdaLN(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_ff, bias=False),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_ff, d_model, bias=False),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, scale_shift, attn_mask=None):
+        # Attention with adaLN
+        x = x + self.dropout(self.attn(
+            self.ada_attn(x, scale_shift),
+            self.ada_attn(x, scale_shift),
+            self.ada_attn(x, scale_shift),
+            attn_mask=attn_mask, need_weights=False)[0])
+        # FFN with adaLN
+        x = x + self.dropout(self.ffn(self.ada_ffn(x, scale_shift)))
+        return x
+
+
+# ── Noise Schedules ──
+
+def cosine_schedule(t: TensorType["B"]) -> TensorType["B"]:
+    """Cosine noise schedule: α(t) = cos(t * π/2)."""
+    return (t * math.pi / 2).cos()
+
+def linear_schedule(t: TensorType["B"]) -> TensorType["B"]:
+    """Linear noise schedule: α(t) = 1 - t."""
+    return 1 - t
+
+
+# ── Full Model ──
+
+class MDLM(nn.Module):
+    """Masked Diffusion Language Model — student architecture."""
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        # Token embedding
+        self.token_embed = nn.Embedding(config.vocab_size, config.d_model)
+
+        # RoPE (one shared instance, not per-layer)
+        self.rotary = RotaryEmbedding(config.d_model // config.n_heads, config.rope_theta)
+
+        # Time embedding (one shared instance)
+        self.time_embed = TimeEmbedding(config.d_model, config.time_dim)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList([
+            TransformerBlock(config.d_model, config.n_heads, config.d_ff, config.dropout)
+            for _ in range(config.n_layers)
+        ])
+
+        # Final norm + head
+        self.final_norm = nn.LayerNorm(config.d_model)
+        self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        # Cache time embedding projections to avoid redundant computation
+        self._scale_shift_cache = {}
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, std=0.02)
+
+    def get_schedule(self, t: TensorType["B"]) -> TensorType["B"]:
+        """Get α(t) for the configured schedule."""
+        if self.config.schedule_type == "cosine":
+            return cosine_schedule(t)
+        return linear_schedule(t)
+
+    def get_mask(self, t: TensorType["B"], seq_len: int) -> TensorType["B", "L"]:
+        """Sample a binary mask given noise level t.
+        
+        Each sample gets α(t) * seq_len tokens masked (randomly selected).
+        Returns: [B, L] — True = masked.
+        """
+        B = t.shape[0]
+        alpha = self.get_schedule(t)  # [B]
+        n_mask = (alpha * seq_len).long().clamp(1, seq_len - 1)
+
+        # Randomly select which positions to mask
+        rand = torch.rand(B, seq_len, device=t.device)
+        # Mask the n_mask[i] positions with lowest rand values
+        threshold = rand.sort(dim=-1).values[torch.arange(B), n_mask - 1]
+        mask = rand <= threshold.unsqueeze(-1)
+        return mask
+
+    def forward(self, x: TensorType["B", "L"],
+                t: TensorType["B"],
+                mask: TensorType["B", "L"] = None) -> TensorType["B", "L", "V"]:
+        """Forward pass: embed, apply mask, run blocks, predict logits.
+        
+        Args:
+            x: Token IDs [B, L]. Already has [MASK] tokens applied.
+            t: Noise levels [B] in [0, 1].
+            mask: Boolean mask [B, L] — True = masked position.
+            
+        Returns:
+            logits: [B, L, vocab_size] — predictions for all positions.
+        """
+        B, L = x.shape
+        device = x.device
+
+        # Embed tokens
+        h = self.token_embed(x)  # [B, L, d_model]
+
+        # RoPE sin/cos
+        cos_sin = self.rotary(L, device)
+        cos, sin = cos_sin.chunk(2, dim=-1)
+        # Expand for multi-head: [L, d_h]
+        d_h = self.config.d_model // self.config.n_heads
+        cos = cos[:, :d_h]
+        sin = sin[:, :d_h]
+
+        # Time embedding → scale/shift per block
+        scale_shift = self.time_embed(t)  # [B, d_model*2]
+
+        # Run blocks (pre-compute scale_shift once, broadcast to all blocks)
+        for block in self.blocks:
+            h = block(h, scale_shift)
+
+        h = self.final_norm(h)
+        logits = self.head(h)  # [B, L, vocab_size]
+        return logits
+
+    @torch.no_grad()
+    def generate(self, tokenizer, prompt_ids=None, length=512,
+                 steps=64, temp=1.0, top_k=50):
+        """Generate text by iterative denoising.
+        
+        Args:
+            tokenizer: BPE tokenizer with [MASK] token.
+            prompt_ids: [1, prompt_len] — optional prompt tokens.
+            length: Total sequence length to generate.
+            steps: Number of denoising steps.
+            temp: Sampling temperature.
+            top_k: Top-k filtering.
+            
+        Returns:
+            Token IDs [1, length].
+        """
+        self.eval()
+        device = next(self.parameters()).device
+        mask_id = tokenizer.token_to_id("[MASK]")
+
+        if prompt_ids is not None:
+            prompt_len = prompt_ids.shape[1]
+            x = torch.full((1, length), mask_id, dtype=torch.long, device=device)
+            x[:, :prompt_len] = prompt_ids
+        else:
+            x = torch.full((1, length), mask_id, dtype=torch.long, device=device)
+
+        t_vals = torch.linspace(1.0, 0.0, steps, device=device)
+        for step, t in enumerate(t_vals):
+            # Current mask: where x == [MASK]
+            mask = (x == mask_id)
+
+            # Predict logits for all positions
+            logits = self.forward(x, t.unsqueeze(0), mask)
+            logits = logits / temp
+
+            # Only consider masked positions
+            logits_masked = logits[0, mask[0]]
+
+            # Top-k filtering
+            if top_k > 0:
+                top_vals, _ = torch.topk(logits_masked, top_k, dim=-1)
+                logits_masked[logits_masked &lt; top_vals[:, -1:]] = -float('inf')
+
+            # Sample
+            probs = F.softmax(logits_masked, dim=-1)
+            samples = torch.multinomial(probs, 1).squeeze(-1)
+
+            # Compute confidence of predictions
+            confidence = probs.max(dim=-1).values
+
+            # Determine how many tokens to reveal at this step
+            n_unmasked = mask.sum()
+            n_to_reveal = max(1, n_unmasked // (steps - step))
+
+            # Reveal the highest-confidence predictions
+            _, indices = confidence.topk(n_to_reveal)
+            x[0, mask[0].nonzero().squeeze(-1)[indices]] = samples[indices]
+
+        return x</pre>
+</div>
+
+<div class="callout callout-info">
+  <strong>Key differences from your tiny MDLM (Lesson 0005):</strong>
+  <ul>
+    <li><strong>RoPE</strong> instead of learned absolute positions — can extrapolate to longer sequences</li>
+    <li><strong>Pre-norm</strong> architecture (LayerNorm before each sublayer, not after) — more stable at 20 layers</li>
+    <li><strong>Per-layer adaLN</strong> — each block receives the time modulation independently</li>
+    <li><strong>Flash-Attention compatible</strong> — uses <code>nn.MultiheadAttention</code> (swap to Flash for speed)</li>
+  </ul>
+</div>
+
+<h3>4c. Verify Architecture</h3>
+
+<div class="code-block">
+  <div class="filename">04_build_student.py</div>
+  <pre>"""
+Verify the student model architecture and parameter count.
+Usage: python 04_build_student.py
+"""
+import torch
+from config import MDLMConfig
+from model import MDLM
+
+config = MDLMConfig()
+model = MDLM(config)
+
+# Count parameters
+total = sum(p.numel() for p in model.parameters())
+trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Total params:     {total:,} ({total/1e6:.1f}M)")
+print(f"Trainable params: {trainable:,} ({trainable/1e6:.1f}M)")
+
+# Verify forward pass
+x = torch.randint(0, config.vocab_size, (1, 128))  # small test
+t = torch.tensor([0.5])
+mask = torch.zeros(1, 128, dtype=torch.bool)
+mask[:, :60] = True  # mask 60/128 tokens
+
+logits = model(x, t, mask)
+print(f"Input:  {x.shape}")
+print(f"Output: {logits.shape} (expected [1, 128, {config.vocab_size}])")
+print(f"Forward pass: ✅")</pre>
+</div>
+
+<p>Expected output: <strong>Total params: ~321M (321M)</strong></p>
+
+<!-- ============================================================ -->
+<!-- STEP 5: TEACHER SETUP -->
+<!-- ============================================================ -->
+
+<h2>Step 5: 🎓 Load the Teacher (LLaDA 8B)</h2>
+
+<p><strong>Goal:</strong> Load LLaDA 8B in 4-bit quantization and verify it runs on your L40S. This model generates the soft targets for distillation.</p>
+
+<div class="code-block">
+  <div class="filename">05_setup_teacher.py</div>
+  <pre>"""
+Load LLaDA 8B in 4-bit and verify inference works.
+Usage: python 05_setup_teacher.py
+VRAM: ~5 GB (NF4), ~16 GB (BF16)
+"""
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+model_name = "ML-GSAI/LLaDA-8B"
+
+# 4-bit quantization config
+quant = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4",
+)
+
+print(f"Loading LLaDA 8B in 4-bit...")
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    quantization_config=quant,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True,
+)
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+# Verify: generate a short sample
+prompt = "Olá, mundo! Como você está?"
+inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+output = model.generate(
+    **inputs,
+    max_new_tokens=50,
+    temperature=0.7,
+    do_sample=True,
+)
+print(f"Teacher output: {tokenizer.decode(output[0])}")
+
+# Check VRAM usage
+vram = torch.cuda.max_memory_allocated() / 1e9
+print(f"VRAM usage: {vram:.2f} GB")
+print(f"Teacher ready: ✅")</pre>
+</div>
+
+<div class="callout callout-warning">
+  <strong>Note on LLaDA's architecture:</strong> LLaDA 8B is a <em>masked diffusion</em> LM, not a causal LM. Its <code>generate()</code> method implements iterative denoising, not autoregressive decoding. The Hugging Face integration may differ from standard causal models — check the <a href="https://github.com/ML-GSAI/LLaDA">LLaDA GitHub</a> for the correct API. If <code>AutoModelForCausalLM</code> doesn't work, use <code>AutoModel.from_pretrained(..., trust_remote_code=True)</code> and call the model's native <code>.generate()</code> method.
+</div>
+
+<!-- ============================================================ -->
+<!-- STEP 6: DISTILLATION -->
+<!-- ============================================================ -->
+
+<h2>Step 6: 🔬 Distill — Train the Student</h2>
+
+<p><strong>Goal:</strong> Train the 300M student to match LLaDA 8B's logits at multiple noise levels. This is the main training script — runs for ~1.2 days on L40S.</p>
+
+<div class="code-block">
+  <div class="filename">06_distill.py</div>
+  <pre>"""
+Distill LLaDA 8B → 300M MDLM student.
+Usage: python 06_distill.py
+
+Training loop:
+1. Sample a batch of token sequences from shards
+2. Randomly mask a subset of tokens (noise level t)
+3. Forward pass through student (predict masked tokens)
+4. Forward pass through teacher (4-bit, no grad) — soft targets
+5. Loss = α * KL(student_logits || teacher_logits) + (1-α) * L_diffusion
+6. Backprop through student only
+"""
+import os, math, time
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, IterableDataset
+import numpy as np
+from transformers import AutoModel, BitsAndBytesConfig
+from tokenizers import Tokenizer
+
+from config import MDLMConfig
+from model import MDLM
+
+# ── Dataset ──
+
+class ShardDataset(IterableDataset):
+    """Streams uint16 token IDs from binary shards."""
+    def __init__(self, data_dir: str, seq_len: int):
+        self.shards = sorted([
+            os.path.join(data_dir, f)
+            for f in os.listdir(data_dir) if f.endswith(".bin")
+        ])
+        self.seq_len = seq_len
+
+    def __iter__(self):
+        while True:
+            for shard_path in self.shards:
+                tokens = np.fromfile(shard_path, dtype=np.uint16).astype(np.int64)
+                # Yield random sequences
+                for _ in range(len(tokens) // self.seq_len):
+                    start = np.random.randint(0, len(tokens) - self.seq_len)
+                    yield torch.tensor(tokens[start:start + self.seq_len])
+
+# ── Loss Functions ──
+
+def diffusion_loss(logits, targets, mask):
+    """Cross-entropy loss on masked positions only."""
+    # logits: [B, L, V], targets: [B, L], mask: [B, L]
+    loss = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        targets.view(-1),
+        reduction='none'
+    )  # [B*L]
+    return loss.view_as(mask)[mask].mean()
+
+def distillation_kl(student_logits, teacher_logits, mask, temperature=2.0):
+    """KL divergence between student and teacher distributions (masked positions only)."""
+    # Soften distributions with temperature
+    s = F.log_softmax(student_logits / temperature, dim=-1)
+    t = F.softmax(teacher_logits / temperature, dim=-1)
+    # KL = sum(t * (log t - log s)) averaged over masked positions
+    kl = F.kl_div(s, t, reduction='none').sum(-1)  # [B, L]
+    return kl[mask].mean() * (temperature ** 2)  # Scale back
+
+# ── Main Training Loop ──
+
+def train():
+    config = MDLMConfig()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+
+    # Student
+    student = MDLM(config).to(device)
+    print(f"Student params: {sum(p.numel() for p in student.parameters()):,}")
+
+    # Teacher (4-bit)
+    print("Loading teacher (LLaDA 8B, 4-bit)...")
+    quant = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+    )
+    teacher = AutoModel.from_pretrained(
+        config.teacher_name,
+        quantization_config=quant,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    ).eval()
+    for p in teacher.parameters():
+        p.requires_grad = False
+    print("Teacher loaded.")
+
+    # Tokenizer
+    tokenizer = Tokenizer.from_file(config.tokenizer_path)
+    mask_id = tokenizer.token_to_id("[MASK]")
+
+    # Data
+    dataset = ShardDataset(config.data_dir, config.max_seq_len)
+    loader = DataLoader(dataset, batch_size=config.batch_size)
+
+    # Optimizer (Adafactor — saves ~8 GB vs AdamW)
+    from transformers import Adafactor
+    optim = Adafactor(
+        student.parameters(),
+        lr=config.learning_rate,
+        relative_step=False,
+        scale_parameter=False,
+        warmup_init=False,
+    )
+
+    # Training loop
+    os.makedirs(config.checkpoint_dir, exist_ok=True)
+    step = 0
+    accum_loss = 0.0
+    best_loss = float('inf')
+    t_start = time.time()
+
+    print(f"\nStarting distillation ({config.max_steps} steps)...")
+    student.train()
+
+    for batch in loader:
+        if step >= config.max_steps:
+            break
+
+        # ── 1. Prepare input ──
+        x = batch.to(device)  # [B, L]
+        B, L = x.shape
+
+        # Random noise level for each sample
+        t = torch.rand(B, device=device)  # [B] uniform in [0,1]
+
+        # Generate mask
+        mask = student.get_mask(t, L)  # [B, L] — True = masked
+
+        # Apply mask: replace masked positions with [MASK] token
+        x_masked = x.clone()
+        x_masked[mask] = mask_id
+
+        # ── 2. Student forward ──
+        student_logits = student(x_masked, t, mask)  # [B, L, V]
+
+        # ── 3. Teacher forward (no grad) ──
+        with torch.no_grad():
+            # Teacher sees the same masked input
+            teacher_logits = teacher(x_masked, t, mask).logits  # [B, L, V]
+
+        # ── 4. Loss ──
+        loss_diff = diffusion_loss(student_logits, x, mask)
+        loss_kl = distillation_kl(
+            student_logits, teacher_logits, mask,
+            temperature=config.teacher_kl_temperature,
+        )
+
+        # Decay distillation weight over training
+        if config.distill_alpha_decay:
+            alpha = config.distill_alpha * (1 - step / config.max_steps)
+        else:
+            alpha = config.distill_alpha
+
+        loss = alpha * loss_kl + (1 - alpha) * loss_diff
+
+        # Scale by grad accum steps
+        loss = loss / config.grad_accum_steps
+        loss.backward()
+
+        accum_loss += loss.item()
+
+        # ── 5. Optimizer step ──
+        if (step + 1) % config.grad_accum_steps == 0:
+            torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+            optim.step()
+            optim.zero_grad()
+
+        # ── 6. Logging ──
+        if step % 100 == 0:
+            elapsed = time.time() - t_start
+            tok_per_sec = (step + 1) * B * L / elapsed
+            print(f"Step {step:>6d}/{config.max_steps} | "
+                  f"loss={accum_loss/(step+1):.4f} | "
+                  f"diff={loss_diff.item():.4f} | "
+                  f"kl={loss_kl.item():.4f} | "
+                  f"tok/s={tok_per_sec:.0f} | "
+                  f"α={alpha:.3f}")
+
+        # ── 7. Save checkpoint ──
+        if step % 5_000 == 0 and step &gt; 0:
+            ckpt = os.path.join(config.checkpoint_dir, f"student_{step:06d}.pt")
+            torch.save(student.state_dict(), ckpt)
+            print(f"  → Saved {ckpt}")
+
+        step += 1
+
+    # Final save
+    ckpt = os.path.join(config.checkpoint_dir, "student_final.pt")
+    torch.save(student.state_dict(), ckpt)
+    elapsed = time.time() - t_start
+    print(f"\nDone! {step} steps in {elapsed/3600:.1f} hours")
+    print(f"Final checkpoint: {ckpt}")
+    print(f"Average throughput: {step * B * L / elapsed:.0f} tok/s")
+
+if __name__ == "__main__":
+    train()</pre>
+</div>
+
+<h3>Expected Training Run</h3>
+
+<table>
+  <tr><th>Metric</th><th>Value</th></tr>
+  <tr><td>Student params</td><td>~321M</td></tr>
+  <tr><td>Teacher params (4-bit)</td><td>8B (~5 GB VRAM)</td></tr>
+  <tr><td>VRAM (student + teacher + acts)</td><td>~8-10 GB (Adafactor + grad ckpt)</td></tr>
+  <tr><td>Throughput (L40S)</td><td>~9,000-10,000 tok/s</td></tr>
+  <tr><td>Steps</td><td>50,000</td></tr>
+  <tr><td>Effective tokens seen</td><td>50K × 2 (batch) × 8K (seq) = ~800M</td></tr>
+  <tr><td>Total time (L40S)</td><td><strong>~27 hours (1.1 days)</strong></td></tr>
+</table>
+
+<div class="callout callout-success">
+  <strong>VRAM optimization tips if you're tight:</strong>
+  <ol>
+    <li><strong>Gradient checkpointing:</strong> Add <code>student.gradient_checkpointing_enable()</code> after creating the student — trades ~20% compute for ~40% less activation memory.</li>
+    <li><strong>Smaller batch size:</strong> Drop to batch_size=1, double grad_accum_steps to 16. Same effective batch, half the peak VRAM.</li>
+    <li><strong>Cache teacher logits offline:</strong> Run teacher once on the entire dataset, save logits, then train student without teacher in memory. Saves ~5 GB VRAM but requires ~5-10 GB disk.</li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- STEP 7: EVALUATION -->
+<!-- ============================================================ -->
+
+<h2>Step 7: 📊 Evaluate the Student</h2>
+
+<p><strong>Goal:</strong> Check if the distillation worked. Three levels of evaluation:</p>
+
+<h3>7a. Qualitative — Generate samples</h3>
+
+<div class="code-block">
+  <div class="filename">07_evaluate.py</div>
+  <pre>"""
+Evaluate the distilled student model.
+Usage: python 07_evaluate.py --checkpoint checkpoints/student/student_final.pt
+
+Generates text, computes perplexity, compares to teacher.
+"""
+import torch, argparse
+from tokenizers import Tokenizer
+from config import MDLMConfig
+from model import MDLM
+
+def generate_samples(model, tokenizer, prompts, length=256):
+    """Generate completions for given prompts."""
+    model.eval()
+    for prompt in prompts:
+        prompt_ids = tokenizer.encode(prompt).ids
+        prompt_tensor = torch.tensor([prompt_ids])
+        output = model.generate(
+            tokenizer,
+            prompt_ids=prompt_tensor,
+            length=length,
+            steps=64,
+            temp=0.8,
+            top_k=40,
+        )
+        decoded = tokenizer.decode(output[0].tolist())
+        print(f"\nPrompt: {prompt}")
+        print(f"Output: {decoded}")
+        print("-" * 60)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", default="checkpoints/student/student_final.pt")
+    args = parser.parse_args()
+
+    config = MDLMConfig()
+    model = MDLM(config)
+    model.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
+    model = model.cuda()
+
+    tokenizer = Tokenizer.from_file(config.tokenizer_path)
+
+    test_prompts = [
+        "Explique como funciona o algoritmo de busca binária",
+        "Write a Python function to merge two sorted lists",
+        "The main difference between diffusion and autoregressive models is",
+        "Para configurar um servidor web em Node.js, você precisa",
+        "def quick_sort(arr):",
+    ]
+    generate_samples(model, tokenizer, test_prompts)</pre>
+</div>
+
+<h3>7b. Quantitative — Perplexity on held-out data</h3>
+
+<div class="code-block">
+  <pre># Compute perplexity on a held-out set of masked sequences
+def compute_ppl(model, data_loader, tokenizer):
+    """Compute perplexity on masked token prediction."""
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    mask_id = tokenizer.token_to_id("[MASK]")
+
+    with torch.no_grad():
+        for batch in data_loader:
+            x = batch.cuda()
+            B, L = x.shape
+            t = torch.rand(B, device="cuda")
+            mask = model.get_mask(t, L)
+            x_masked = x.clone()
+            x_masked[mask] = mask_id
+
+            logits = model(x_masked, t, mask)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                x.view(-1),
+                reduction='sum'
+            )
+            total_loss += loss.item()
+            total_tokens += mask.sum().item()
+
+    ppl = math.exp(total_loss / total_tokens)
+    return ppl</pre>
+</div>
+
+<h3>7c. Teacher–Student Agreement</h3>
+
+<div class="code-block">
+  <pre># Compare student vs teacher on a shared test set
+def compute_agreement(student, teacher, data_loader, tokenizer):
+    """What fraction of the time does student predict the same token as teacher?"""
+    student.eval()
+    teacher.eval()
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for batch in data_loader:
+            x = batch.cuda()
+            B, L = x.shape
+            t = torch.full((B,), 0.5, device="cuda")  # Fixed noise level
+            mask = student.get_mask(t, L)
+            x_masked = x.clone()
+            x_masked[mask] = tokenizer.token_to_id("[MASK]")
+
+            s_logits = student(x_masked, t, mask)
+            t_logits = teacher(x_masked, t, mask).logits
+
+            s_tokens = s_logits.argmax(-1)
+            t_tokens = t_logits.argmax(-1)
+
+            correct += (s_tokens[mask] == t_tokens[mask]).sum().item()
+            total += mask.sum().item()
+
+    return correct / total</pre>
+</div>
+
+<!-- ============================================================ -->
+<!-- GENERATION -->
+<!-- ============================================================ -->
+
+<h2>🧪 Bonus: Generate with Your Model</h2>
+
+<p>Once distilled, you can generate text with your student model anywhere — including your local 8 GB GPU:</p>
+
+<div class="code-block">
+  <div class="filename">generate.py</div>
+  <pre>"""
+Generate text with the distilled 300M MDLM.
+Usage: python generate.py --prompt "Write a function that" --length 512
+
+No internet needed. Runs on any GPU with ≥1 GB VRAM.
+"""
+import torch, argparse
+from tokenizers import Tokenizer
+from config import MDLMConfig
+from model import MDLM
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prompt", type=str, default="")
+    parser.add_argument("--length", type=int, default=256)
+    parser.add_argument("--steps", type=int, default=64)
+    parser.add_argument("--temp", type=float, default=0.8)
+    parser.add_argument("--top_k", type=int, default=40)
+    parser.add_argument("--checkpoint", default="checkpoints/student/student_final.pt")
+    args = parser.parse_args()
+
+    # Load
+    config = MDLMConfig()
+    model = MDLM(config)
+    model.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device)
+
+    tokenizer = Tokenizer.from_file(config.tokenizer_path)
+
+    # Encode prompt
+    if args.prompt:
+        prompt_ids = tokenizer.encode(args.prompt).ids
+        prompt_tensor = torch.tensor([prompt_ids], device=device)
+    else:
+        prompt_tensor = None
+
+    # Generate
+    output = model.generate(
+        tokenizer,
+        prompt_ids=prompt_tensor,
+        length=args.length,
+        steps=args.steps,
+        temp=args.temp,
+        top_k=args.top_k,
+    )
+
+    decoded = tokenizer.decode(output[0].tolist())
+    print(decoded)
+
+if __name__ == "__main__":
+    main()</pre>
+</div>
+
+<!-- ============================================================ -->
+<!-- SUMMARY -->
+<!-- ============================================================ -->
+
+<h2>📋 Full Run Timeline</h2>
+
+<table>
+  <tr><th>Step</th><th>Script</th><th>Time</th><th>Where</th></tr>
+  <tr><td>Download data</td><td><code>01_collect_data.py</code></td><td>~1-2 hours</td><td>Any machine (download speed)</td></tr>
+  <tr><td>Train tokenizer</td><td><code>02_train_tokenizer.py</code></td><td>~5 min</td><td>Any machine (CPU fine)</td></tr>
+  <tr><td>Tokenize &amp; shard</td><td><code>03_tokenize_shard.py</code></td><td>~15 min</td><td>Any machine (CPU fine)</td></tr>
+  <tr><td>Verify student</td><td><code>04_build_student.py</code></td><td>~1 min</td><td>Any machine</td></tr>
+  <tr><td>Setup teacher</td><td><code>05_setup_teacher.py</code></td><td>~5 min</td><td>🥇 L40S (downloads 8B model)</td></tr>
+  <tr><td><strong>Distill</strong></td><td><strong><code>06_distill.py</code></strong></td><td><strong>~27 hours</strong></td><td><strong>🥇 L40S (GPU only)</strong></td></tr>
+  <tr><td>Evaluate</td><td><code>07_evaluate.py</code></td><td>~10 min</td><td>Any machine with GPU ≥1 GB</td></tr>
+  <tr><td>Generate</td><td><code>generate.py</code></td><td>~2-5 sec per sample</td><td>Any machine with GPU ≥1 GB</td></tr>
+</table>
+
+<p><strong>Note:</strong> Steps 1-4 can be done on your local machine while you wait for L40S access. Only steps 5-6 need the L40S.</p>
+
+<h2>🧰 What You Now Have</h2>
+
+<div class="decision-box">
+  <h3>A 300M MDLM That Can:</h3>
+  <ul>
+    <li>✅ Generate text in <strong>English and Portuguese</strong></li>
+    <li>✅ Write <strong>code</strong> (Python, TypeScript, Rust, Go, etc.)</li>
+    <li>✅ Follow <strong>agentic coding patterns</strong> (tool use, thinking, iterative refinement)</li>
+    <li>✅ Run on <strong>your local 6-8 GB GPU</strong> (~1 GB VRAM at inference)</li>
+    <li>✅ Run on <strong>CPU</strong> (slow but possible — ~10 tok/s on modern CPU)</li>
+    <li>✅ Be <strong>fully yours</strong> — MIT-licensed architecture, no API calls</li>
+  </ul>
+</div>
+
+<h2>Check Your Understanding</h2>
+
+<div class="quiz">
+  <div class="quiz-question">1. Why does Step 6 use Adafactor instead of AdamW for the optimizer?</div>
+  <div class="quiz-options" id="q1opts">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      Adafactor trains faster than AdamW
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      Adafactor doesn't store FP32 moment buffers (m, v), saving ~8 bytes per parameter — critical for fitting the teacher + student in 48 GB VRAM
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      AdamW doesn't support gradient checkpointing
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      Adafactor is the only optimizer compatible with 4-bit quantization
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q1fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">2. The distillation loss uses an alpha decay schedule: α starts at 0.5 and decays to 0 over training. What is the intuition for this?</div>
+  <div class="quiz-options" id="q2opts">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      Early in training, the student is random — the teacher's distribution provides a strong learning signal. Later, the student should learn to denoise independently without relying on the teacher's crutch.
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      Alpha decay is a form of learning rate scheduling
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      It prevents the teacher from overfitting to the training data
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      The teacher becomes less accurate over time, so we reduce its influence
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q2fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">3. Why is the teacher loaded in 4-bit (NF4) instead of BF16?</div>
+  <div class="quiz-options" id="q3opts">
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="a">
+      4-bit is faster for inference
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="b">
+      8B parameters × 2 bytes (BF16) = 16 GB, which doesn't fit alongside the student + activations in VRAM. 4-bit = ~5 GB, leaving room for training.
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="c">
+      The teacher doesn't need gradient updates, so lower precision is fine
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="d">
+      Hugging Face only supports LLaDA 8B in 4-bit
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q3fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">4. The student's generate() method uses iterative denoising with confidence-based token revelation. What does "reveal the highest-confidence predictions first" accomplish?</div>
+  <div class="quiz-options" id="q4opts">
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="a">
+      It's faster than revealing tokens randomly
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="b">
+      Confident predictions are likely correct. Revealing them first gives the model better context to predict the harder (low-confidence) tokens in later steps — same principle as Lesson 0005.
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="c">
+      It reduces VRAM usage during generation
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="d">
+      High-confidence tokens don't need masking
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q4fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">5. You have 8 GB VRAM on your local GPU. Can you run inference with the distilled 300M model? What about training it from scratch?</div>
+  <div class="quiz-options" id="q5opts">
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="a">
+      Inference: ✅ (~1 GB VRAM). Training: ✅ (3.1 GB with Adafactor, from Lesson 0007 numbers).
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="b">
+      Inference: ❌ (too large). Training: ❌
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="c">
+      Inference: ✅ but only on CPU. Training: ❌
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="d">
+      Inference: ✅. Training: ✅ but only with AdamW
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q5fb"></div>
+</div>
+
+<h2>References</h2>
+<ul>
+  <li><a href="0005-train-tiny-diffusion-lm.html">Lesson 0005</a> — Your tiny MDLM (this architecture scaled up)</li>
+  <li><a href="0006-at-scale-diffusion-gemma-mamba.html">Lesson 0006</a> — Engineering anatomy (RoPE, adaLN, FFN explained)</li>
+  <li><a href="0007-scaling-laws-build-decision.html">Lesson 0007</a> — Why distillation beats training from scratch</li>
+  <li><a href="https://github.com/ML-GSAI/LLaDA">LLaDA 8B — GitHub</a> — Teacher model</li>
+  <li><a href="https://arxiv.org/abs/2406.07524">MDLM Paper</a> — Core algorithm</li>
+  <li><a href="https://github.com/ChrisLundquist/modded-diffumamba">modded-diffumamba</a> — Reference for Muon optimizer, shard format</li>
+</ul>
+
+<nav class="lesson-nav">
+  <a href="0007-scaling-laws-build-decision.html">← Scaling Laws & Build Decision</a>
+  <a href="../reference/cost-and-hardware.html">Cost Reference →</a>
+</nav>
+
+<script>
+(function() {
+  const quizData = {
+    q1: {
+      answer: 'b',
+      correct: '✅ Correct! Adafactor avoids storing FP32 m/v moment buffers, reducing optimizer memory from 16 bytes/param to ~8 bytes/param. For a 321M model, that saves ~2.6 GB — critical when the teacher is also in VRAM.',
+      wrong: '❌ Think about what takes most VRAM during training — model states (weights + gradients + optimizer) are often the biggest consumer. Which optimizer component can we eliminate?'
+    },
+    q2: {
+      answer: 'a',
+      correct: '✅ Exactly! Early distillation (high α): the teacher "shows the student the target distribution." Late training (low α): the student learns to denoise independently. This prevents the student from becoming too dependent on the teacher (a phenomenon called "teacher overfitting").',
+      wrong: '❌ Consider the learning dynamics — what does the student need from the teacher at different stages of training?'
+    },
+    q3: {
+      answer: 'b',
+      correct: '✅ Right! 8B × 2B = 16 GB in BF16, plus the 321M student (~3 GB with optimizer), plus activations (~2 GB) = ~21 GB. That fits on 48 GB — but 4-bit gives you headroom for larger batches or longer sequences.',
+      wrong: '❌ The question is about VRAM budgeting. How much does each component cost at different precisions?'
+    },
+    q4: {
+      answer: 'b',
+      correct: '✅ Bingo! Same principle as Lesson 0005\'s "confident-first" strategy. Each step reveals the tokens the model is most sure about, giving better context for the remaining masked tokens. This is a standard technique in masked diffusion inference.',
+      wrong: '❌ Consider the iterative nature of diffusion — how does revealing easy tokens help with the hard ones?'
+    },
+    q5: {
+      answer: 'a',
+      correct: '✅ Correct! From Lesson 0007: 300M inference = ~1.1 GB VRAM (fits anywhere). Training from scratch = ~3.3 GB with Adafactor (fits on both 6 GB and 8 GB). Distillation (with teacher in 4-bit) needs ~8-10 GB, which fits on L40S but not locally.',
+      wrong: '❌ Recall the VRAM numbers from Lesson 0007 — inference is lightweight, and training 300M from scratch fits on consumer GPUs with the right optimizer.'
+    }
+  };
+
+  ['q1', 'q2', 'q3', 'q4', 'q5'].forEach(qName => {
+    const opts = document.getElementById(qName + 'opts');
+    const fb = document.getElementById(qName + 'fb');
+    const radios = opts.querySelectorAll('input[type="radio"]');
+    radios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        const selected = radio.closest('.quiz-option');
+        if (radio.value === quizData[qName].answer) {
+          selected.classList.add('correct');
+          fb.innerHTML = quizData[qName].correct;
+        } else {
+          selected.classList.add('wrong');
+          fb.innerHTML = quizData[qName].wrong;
+        }
+        fb.classList.add('show');
+      });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

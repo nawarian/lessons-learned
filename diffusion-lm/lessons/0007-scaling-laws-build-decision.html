@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0007: 📐 Scaling Laws & Your Build Decision</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  /* Decision matrix */
+  .decision-matrix {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+    margin: 1rem 0;
+  }
+  .decision-matrix .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+    background: var(--blockquote-bg);
+  }
+  .decision-matrix .card h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+  }
+  .decision-matrix .card .big-number {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .decision-matrix .card .label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+  }
+  @media (max-width: 560px) {
+    .decision-matrix { grid-template-columns: 1fr; }
+  }
+
+  /* Verdict banner */
+  .verdict-banner {
+    padding: 1.5rem;
+    border-radius: 10px;
+    margin: 1.5rem 0;
+    text-align: center;
+    border: 2px solid;
+  }
+  .verdict-banner h3 {
+    margin-top: 0;
+    font-size: 1.2rem;
+  }
+  .verdict-banner.build {
+    background: rgba(22, 163, 74, 0.08);
+    border-color: var(--success);
+  }
+  .verdict-banner.wait {
+    background: rgba(220, 38, 38, 0.08);
+    border-color: var(--error);
+  }
+  .verdict-banner.conditional {
+    background: rgba(217, 119, 6, 0.08);
+    border-color: var(--warning);
+  }
+
+  /* FLOPs meter */
+  .flops-bar {
+    display: flex;
+    height: 28px;
+    margin: 0.75rem 0;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .flops-bar .segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    min-width: fit-content;
+    padding: 0 6px;
+  }
+  .flops-bar .ar { background: #3b82f6; }
+  .flops-bar .diffusion { background: #f59e0b; }
+  .flops-bar .gap { background: #6b7280; }
+
+  /* Path comparison table */
+  .path-table td:first-child {
+    font-weight: 600;
+  }
+  .path-score {
+    display: inline-block;
+    width: 1.6rem;
+    height: 1.6rem;
+    line-height: 1.6rem;
+    border-radius: 50%;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+  }
+  .path-score.a { background: #d1fae5; color: #065f46; }
+  .path-score.b { background: #fef3c7; color: #92400e; }
+  .path-score.c { background: #dbeafe; color: #1e40af; }
+  @media (prefers-color-scheme: dark) {
+    .path-score.a { background: #14532d; color: #6ee7b7; }
+    .path-score.b { background: #451a03; color: #fde68a; }
+    .path-score.c { background: #1e3a5f; color: #93c5fd; }
+  }
+
+  /* Timeline visual */
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 1rem 0;
+  }
+  .timeline-row {
+    display: grid;
+    grid-template-columns: 6rem 1fr;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .timeline-row .label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: right;
+    font-family: var(--font-mono);
+  }
+  .timeline-row .bar-track {
+    height: 28px;
+    background: var(--code-bg);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+  .timeline-row .bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  .timeline-row .bar-fill.fast { background: var(--success); width: 10%; }
+  .timeline-row .bar-fill.medium { background: #f59e0b; width: 35%; }
+  .timeline-row .bar-fill.slow { background: var(--accent); width: 60%; }
+  .timeline-row .bar-fill.pain { background: var(--error); width: 90%; }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  @media (max-width: 560px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+
+  .decision-box {
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    background: var(--blockquote-bg);
+  }
+  .decision-box h3 {
+    margin-top: 0;
+  }
+  .decision-box .cost-tag {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+  }
+  .decision-box .cost-tag.free { background: #d1fae5; color: #065f46; }
+  .decision-box .cost-tag.cheap { background: #fef3c7; color: #92400e; }
+  .decision-box .cost-tag.pricey { background: #fce7f3; color: #9d174d; }
+  @media (prefers-color-scheme: dark) {
+    .decision-box .cost-tag.free { background: #14532d; color: #6ee7b7; }
+    .decision-box .cost-tag.cheap { background: #451a03; color: #fde68a; }
+    .decision-box .cost-tag.pricey { background: #4a0e2c; color: #fbcfe8; }
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <h1>📐 Lesson 0007: Scaling Laws & Your Build Decision</h1>
+  <p class="lesson-meta">Estimated time: 25 min · Prerequisites: Lessons 0001–0006</p>
+  <nav class="lesson-nav">
+    <a href="0006-at-scale-diffusion-gemma-mamba.html">← At Scale</a>
+    <a href="../reference/cost-and-hardware.html">Cost Reference →</a>
+    <a href="0008-build-distill-300m-mdlm.html">Next → Build: Distill 300M MDLM</a>
+  </nav>
+</div>
+
+<blockquote>
+<strong>tl;dr</strong> — You've learned how masked diffusion works, trained a tiny MDLM, studied the engineering anatomy of production-scale models, and seen concrete fine-tuning recipes. Now it's time for the final answer: <em>should you build a diffusion LM on your L40S?</em> Spoiler: yes, but not by training from scratch. The scaling laws are brutal for diffusion — 16× more compute for the same quality as autoregressive. But fine-tuning existing models (LLaDA 8B) or training small domain-specific models (≤300M) are both viable and well-matched to your hardware and budget.
+</blockquote>
+
+<!-- ============================================================ -->
+<!-- PART 1: THE SCALING LAWS -->
+<!-- ============================================================ -->
+
+<h2>Part 1: 📐 What the Scaling Laws Actually Say</h2>
+
+<p>Before we make a decision, we need the numbers. The most important result for diffusion LMs comes from the <strong>SMDM paper</strong> (Sahoo et al., 2024), which measured how masked diffusion models scale compared to autoregressive models.</p>
+
+<h3>The 16× Compute Gap</h3>
+
+<div class="callout callout-warning">
+  <strong>The single most important number in this lesson:</strong> Masked diffusion models need <strong>16× more training compute</strong> to reach the same validation loss as an autoregressive model of the same parameter count. This isn't speculation — it's measured empirically across multiple model sizes in the SMDM paper.
+</div>
+
+<p>Let me make this concrete with the iso-FLOP contour:</p>
+
+<div class="flops-bar">
+  <div class="segment ar" style="width: 6%;">AR 125M</div>
+  <div class="segment gap" style="width: 94%;">16× gap → same compute as...</div>
+</div>
+<p style="font-size:0.85rem; color:var(--text-secondary); text-align:center;">
+  ← AR 125M uses 1× compute → MDLM 1B uses 16× compute for <em>same quality</em>
+</p>
+
+<p>In plain terms: <strong>a 1B masked diffusion LM trained with the same FLOPs as a 1B AR model achieves roughly the quality of a 125M AR model.</strong> You're spending 1B-param-level compute for 125M-param-level quality.</p>
+
+<h3>Why Does This Happen?</h3>
+
+<p>It's not because diffusion is "worse" — it's structurally different. An AR model sees each token once and predicts the next. A diffusion model sees each token multiple times at different noise levels. That iterative refinement creates more learning signal per token (which helps downstream inference), but it also means each training token goes through the model more times.</p>
+
+<p>The tradeoff is fundamental:</p>
+
+<table>
+  <tr><th>Dimension</th><th>Autoregressive</th><th>Masked Diffusion</th><th>Winner</th></tr>
+  <tr><td>Training compute (iso-loss)</td><td>1× (baseline)</td><td><strong>16×</strong></td><td>AR 🏆</td></tr>
+  <tr><td>Inference quality (iso-compute)</td><td>Lower at same budget</td><td>Higher — tunable via steps</td><td>Diffusion 🏆</td></tr>
+  <tr><td>Inference parallelism</td><td>Sequential (slow)</td><td>Parallel (all tokens at once)</td><td>Diffusion 🏆</td></tr>
+  <tr><td>Controllable generation</td><td>Hard (prompt engineering)</td><td>Natural (gradient guidance)</td><td>Diffusion 🏆</td></tr>
+  <tr><td>Data efficiency</td><td>Higher</td><td>Lower (needs more tokens)</td><td>AR 🏆</td></tr>
+  <tr><td>KV-cache memory</td><td>O(L × d)</td><td><strong>None</strong></td><td>Diffusion 🏆</td></tr>
+</table>
+
+<p><strong>The implication for you:</strong> Training a diffusion LM from scratch is <em>economically</em> harder than training an AR model of the same size. But if you're <strong>fine-tuning an existing model</strong>, you pay the fine-tuning cost (not the pre-training cost) — and that's the same order of magnitude as fine-tuning an AR model.</p>
+
+<h3>Chinchilla Applied to Diffusion</h3>
+
+<p>The Chinchilla formula (20 tokens per parameter) gives the optimal compute allocation for training. For diffusion LMs at your scale:</p>
+
+<table>
+  <tr><th>Model Size</th><th>Optimal Tokens (Chinchilla)</th><th>AR-equivalent Quality</th><th>AR Compute Equivalent</th></tr>
+  <tr><td>100M</td><td>2B</td><td>~6M AR</td><td>~3 hours on L40S</td></tr>
+  <tr><td>300M</td><td>6B</td><td>~19M AR</td><td>~1 day on L40S</td></tr>
+  <tr><td>1B</td><td>20B</td><td>~62M AR</td><td>~2-3 weeks on L40S</td></tr>
+  <tr><td>3B</td><td>60B</td><td>~188M AR</td><td>~2-3 months on L40S</td></tr>
+  <tr><td>8B</td><td>164B</td><td>~500M AR</td><td>Not feasible on single GPU</td></tr>
+</table>
+
+<p>This is the sobering math. A 300M diffusion model you spend a day training has the <em>quality ceiling</em> of a 19M AR model — roughly GPT-1 territory (2018). That doesn't mean it's useless; domain specialization can overcome the size gap. But you need to be realistic about <strong>general language quality</strong> vs <strong>task-specific performance</strong>.</p>
+
+<div class="callout callout-success">
+  <strong>The counterargument:</strong> These are <em>loss</em> comparisons on <em>general</em> text. A 300M diffusion model trained <em>exclusively</em> on Portuguese technical documentation will outperform a 19M AR model at the same task. Domain specialization gives you leverage that the raw scaling laws don't capture. Don't let the 16× scare you into paralysis — it just means you need to be smart about where you apply it.
+</div>
+
+<!-- ============================================================ -->
+<!-- PART 2: YOUR HARDWARE IN PERSPECTIVE -->
+<!-- ============================================================ -->
+
+<h2>Part 2: 🖥️ Your Hardware in Perspective</h2>
+
+<p>Let's ground the scaling laws in your actual setup. We'll use your tiny MDLM training as a benchmark.</p>
+
+<h3>Your Tiny MDLM as a Benchmark</h3>
+
+<table>
+  <tr><th>Metric</th><th>Your Tiny MDLM</th><th>Scaled to L40S</th></tr>
+  <tr><td>Parameters</td><td>2.5M</td><td>Up to ~1B (dense)</td></tr>
+  <tr><td>d_model</td><td>128</td><td>Up to 1,536</td></tr>
+  <tr><td>Layers</td><td>4</td><td>Up to 24</td></tr>
+  <tr><td>Seq length</td><td>128</td><td>Up to 8,192</td></tr>
+  <tr><td>Vocab</td><td>62 (char)</td><td>32K (BPE) or 50K (GPT-2)</td></tr>
+  <tr><td>Training time</td><td>~5 min (local 8 GB)</td><td>—</td></tr>
+  <tr><td>Throughput</td><td>~2,000 tok/s</td><td>~10,000-50,000 tok/s</td></tr>
+  <tr><td>GPU used</td><td>RTX 3060 (8 GB)</td><td>L40S (48 GB, ~2.5× faster, 6× more VRAM)</td></tr>
+</table>
+
+<h3>What Fits on Your Hardware</h3>
+
+<div class="two-col">
+  <div class="decision-box">
+    <h3>🖥️ Single L40S (48 GB)</h3>
+    <ul>
+      <li><strong>Fine-tune:</strong> LLaDA 8B (4-bit QLoRA ✅), DiffusionGemma 26B (4-bit QLoRA ✅)</li>
+      <li><strong>Train from scratch:</strong> ≤300M model (6B tokens, ~1 day)</li>
+      <li><strong>Train from scratch (painful):</strong> 1B model (5B tokens, ~1-2 weeks)</li>
+      <li><strong>Inference:</strong> LLaDA 8B (BF16 ✅), DiffusionGemma (4-bit ✅)</li>
+    </ul>
+  </div>
+
+  <div class="decision-box">
+    <h3>🖥️🖥️ 2 Nodes / 4× L40S (192 GB)</h3>
+    <ul>
+      <li><strong>Fine-tune:</strong> DiffusionGemma BF16 LoRA (FSDP ✅)</li>
+      <li><strong>Train from scratch:</strong> 1B model (20B tokens, ~1 week with 4 GPUs)</li>
+      <li><strong>Train from scratch (stretch):</strong> 3B model (60B tokens, ~3 weeks)</li>
+      <li><strong>Cluster cost:</strong> R$ 69/h (4× L40Sx2 VMs)</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Real Costs (Magalu Cloud, R$)</h3>
+
+<table>
+  <tr><th>Scenario</th><th>Hardware</th><th>Time</th><th class="r">Cost (R$)</th><th>Quality</th></tr>
+  <tr>
+    <td>Fine-tune LLaDA 8B (QLoRA)</td>
+    <td>Existing VM (1× L40S)</td>
+    <td>2-4 hours</td>
+    <td class="r">R$ 0 <span class="note">(already paid)</span></td>
+    <td>Full 8B quality 🏆</td>
+  </tr>
+  <tr>
+    <td>Fine-tune DiffusionGemma (QLoRA)</td>
+    <td>Existing VM (1× L40S)</td>
+    <td>8-12 hours</td>
+    <td class="r">R$ 0-104</td>
+    <td>~26B quality 🏆</td>
+  </tr>
+  <tr>
+    <td>Train 300M from scratch</td>
+    <td>Existing VM (1× L40S)</td>
+    <td>~1 day</td>
+    <td class="r">R$ 0-208</td>
+    <td>~19M AR equivalent (but domain-specialized)</td>
+  </tr>
+  <tr>
+    <td>Train 1B from scratch</td>
+    <td>Cluster (4× L40S)</td>
+    <td>~2 days</td>
+    <td class="r">R$ 3.635</td>
+    <td>~62M AR equivalent (domain-specialized)</td>
+  </tr>
+  <tr>
+    <td>Distill LLaDA → 300M student</td>
+    <td>Existing VM (1× L40S)</td>
+    <td>2-3 days</td>
+    <td class="r">R$ 0-416</td>
+    <td>Approaches 8B quality on-domain 🏆</td>
+  </tr>
+</table>
+
+<p class="note">Existing VM costs R$ 6.310/month regardless — training on it has zero incremental cost unless you need extra time beyond the month. Cluster VMs are additional at the rates above.</p>
+
+<!-- ============================================================ -->
+<!-- PART 3: THREE PATHS FORWARD -->
+<!-- ============================================================ -->
+
+<h2>Part 3: 🛤️ Three Paths Forward</h2>
+
+<p>Based on everything you've learned (0001-0006), here are the three viable paths for building a diffusion LM on your hardware. Each path optimizes for a different priority.</p>
+
+<h3>Path A: 🚀 Fine-Tune LLaDA 8B (or DiffusionGemma)</h3>
+
+<div class="decision-box">
+  <h3><span class="cost-tag free">R$ 0-104</span> Path A — Fine-tune an Existing Model</h3>
+  <p><strong>Best for:</strong> Getting a working diffusion LM <em>today</em> with maximum quality.</p>
+  <p><strong>What you do:</strong> Take LLaDA 8B (pre-trained masked diffusion LM, available on Hugging Face). Apply QLoRA (4-bit, ~5 GB for weights). Fine-tune on Portuguese text + code for 2-4 hours on your existing L40S. No new VMs, no cluster setup, no waiting.</p>
+
+  <table class="path-table">
+    <tr><td>Time to first result</td><td><span class="path-score a">A</span> ~3 hours</td></tr>
+    <tr><td>Cost</td><td><span class="path-score a">A</span> R$ 0-104</td></tr>
+    <tr><td>Quality ceiling</td><td><span class="path-score a">A</span> Full 8B model</td></tr>
+    <tr><td>Ownership</td><td><span class="path-score c">C</span> Tied to LLaDA license</td></tr>
+    <tr><td>Educational value</td><td><span class="path-score c">C</span> Black-box fine-tuning</td></tr>
+    <tr><td>Deployment complexity</td><td><span class="path-score b">B</span> 8B model, needs quant for edge</td></tr>
+  </table>
+
+  <p><strong>Your recipe (from lesson 0006):</strong></p>
+  <pre><code># Load LLaDA 8B with 4-bit quantization
+model = LLaDA.from_pretrained("ML-GSAI/LLaDA-8B",
+    torch_dtype=torch.bfloat16,
+    quantization_config=BitsAndBytesConfig(load_in_4bit=True))
+
+# Add LoRA adapters (target: Q, V projections)
+peft_config = LoRAConfig(r=8, lora_alpha=16,
+    target_modules=["q_proj", "v_proj"])
+
+# Train on Portuguese+code pairs
+trainer = Trainer(model, dataset, ...)
+trainer.train()  # ~2-4 hours on L40S</code></pre>
+
+  <div class="callout callout-success">
+    <strong>Verdict:</strong> If you want the <strong>best quality per real spent</strong>, this is the answer. R$ 0-104 and 3 hours for an 8B diffusion LM fine-tuned on your domain. The only downside: you don't own the architecture, and you're tied to LLaDA's research license.
+  </div>
+</div>
+
+<h3>Path B: 🧪 Train a 300M Model from Scratch</h3>
+
+<div class="decision-box">
+  <h3><span class="cost-tag cheap">R$ 0-216</span> Path B — Train a Domain-Specialized Model</h3>
+  <p><strong>Best for:</strong> Full ownership, deep learning, and a model you can distribute freely.</p>
+  <p><strong>What you do:</strong> Scale up your tiny MDLM architecture to ~300M parameters. Use a BPE tokenizer (8K vocab) trained on Portuguese text. Train on 6B tokens of Portuguese + code data. Use the Muon optimizer (modded-diffumamba showed it beats Adam by +0.64 nat). Takes ~1 day on your L40S.</p>
+
+  <table class="path-table">
+    <tr><td>Time to first result</td><td><span class="path-score c">C</span> ~1 day training + data prep</td></tr>
+    <tr><td>Cost</td><td><span class="path-score a">A</span> R$ 0-216 (or R$ 0 if already on VM)</td></tr>
+    <tr><td>Quality ceiling</td><td><span class="path-score c">C</span> ~19M AR equivalent general; higher on-domain</td></tr>
+    <tr><td>Ownership</td><td><span class="path-score a">A</span> Full — MIT or Apache license possible</td></tr>
+    <tr><td>Educational value</td><td><span class="path-score a">A</span> Deep — you build every layer</td></tr>
+    <tr><td>Deployment complexity</td><td><span class="path-score a">A</span> 300M fits on CPU, mobile, edge</td></tr>
+  </table>
+
+  <p><strong>Suggested architecture:</strong></p>
+  <pre><code>MDLM Config "Português-300M":
+  vocab_size: 8,000       (BPE trained on Portuguese data)
+  d_model: 768
+  n_layers: 12
+  n_heads: 12
+  d_ff: 3,072             (4× d_model)
+  max_seq_len: 1,024
+  total_params: ~305M</code></pre>
+
+  <p><strong>Training recipe:</strong></p>
+  <ol>
+    <li><strong>Data:</strong> Collect ~10 GB of Portuguese text (Wikipedia, blog posts, technical docs, code). Tokenize with your BPE tokenizer → ~6B tokens.</li>
+    <li><strong>Model:</strong> Adapt your tiny MDLM code. Increase d_model, layers, heads. Keep adaLN, cosine schedule, learned position embeddings (or switch to RoPE for longer context).</li>
+    <li><strong>Optimizer:</strong> Muon variant (modded-diffumamba shows +0.64 nat over Adam for MDLMs). muon_lr=0.01, adam_lr=3e-4.</li>
+    <li><strong>Schedule:</strong> Cosine noise schedule, 1,000 diffusion steps at inference, 1 step denoising at training (standard MDLM objective).</li>
+    <li><strong>Time:</strong> ~25 hours on single L40S for 6B tokens at ~70K tok/s throughput.</li>
+  </ol>
+
+  <div class="callout callout-info">
+    <strong>What to expect:</strong> The model will generate coherent Portuguese text but won't match GPT-2 quality. Think of it as "a Portuguese BERT that generates" — good for constrained tasks (code completion, documentation generation, structured output) but not open-ended conversation. The domain specialization is your edge.
+  </div>
+</div>
+
+<h3>Path C: 🔬 Distill LLaDA 8B → Your Architecture</h3>
+
+<div class="decision-box">
+  <h3><span class="cost-tag cheap">R$ 0-416</span> Path C — Distill Knowledge to Your Own Model</h3>
+  <p><strong>Best for:</strong> Getting the quality of Path A with the ownership of Path B — the hybrid approach.</p>
+  <p><strong>What you do:</strong> Use LLaDA 8B as a teacher. Generate soft targets (logits at multiple noise levels) on your Portuguese+code data. Train a student model (your architecture, 300M-1B params) to match the teacher's predictions via KL divergence. The student learns the teacher's "thinking process," not just its outputs.</p>
+
+  <table class="path-table">
+    <tr><td>Time to first result</td><td><span class="path-score b">B</span> ~2-3 days (generate teacher outputs + train student)</td></tr>
+    <tr><td>Cost</td><td><span class="path-score b">B</span> R$ 0-416</td></tr>
+    <tr><td>Quality ceiling</td><td><span class="path-score b">B</span> Approaches teacher quality on-domain</td></tr>
+    <tr><td>Ownership</td><td><span class="path-score a">A</span> Full — student is your architecture</td></tr>
+    <tr><td>Educational value</td><td><span class="path-score a">A</span> Deep — you build both teacher interface and student</td></tr>
+    <tr><td>Deployment complexity</td><td><span class="path-score a">A</span> Student is <1/10 the teacher size</td></tr>
+  </table>
+
+  <p><strong>Distillation recipe:</strong></p>
+  <ol>
+    <li><strong>Generate teacher targets:</strong> Run LLaDA 8B on your dataset. For each sample, save the logits at 4-8 different noise levels (t ∈ {0.1, 0.3, 0.5, 0.7, 0.9}). This captures the teacher's <em>denoising trajectory</em>, not just the final prediction.</li>
+    <li><strong>Build student:</strong> Use Path B's architecture (300M with RoPE, adaLN, 8K vocab BPE). Same architecture as your tiny MDLM, scaled up.</li>
+    <li><strong>Train with distillation loss:</strong> L = α · L_diffusion + (1-α) · L_KL(teacher_logits || student_logits). Start with α=0.5, decay to 0.0 over training. The KL term teaches the student to match the teacher's confidence distribution, including <em>uncertainty</em>.</li>
+    <li><strong>Iterate:</strong> Evaluate student vs teacher outputs. If quality gap is large, generate more teacher targets or increase distillation temperature.</li>
+  </ol>
+
+  <div class="callout callout-success">
+    <strong>Why this might be the best of both worlds:</strong> You get the quality of an 8B model distilled into a 300M model that you fully own. The student inherits the teacher's broad language understanding but is small enough to run on a laptop. This is how modern small LMs (Phi-3, TinyLlama, Gemma 2B) are created — they're all distilled from larger models.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- PART 4: THE BUILD DECISION -->
+<!-- ============================================================ -->
+
+<h2>Part 4: 🎯 The Build Decision</h2>
+
+<p>Here's the decision matrix — your specific situation mapped to the best path.</p>
+
+<h3>Decision Tree</h3>
+
+<table>
+  <tr><th>Your Priority</th><th>Best Path</th><th>Why</th></tr>
+  <tr>
+    <td><strong>"I want a working diffusion LM TODAY"</strong></td>
+    <td><strong>A — Fine-tune LLaDA 8B</strong></td>
+    <td>3 hours, R$ 0-104, full 8B quality. No faster path exists.</td>
+  </tr>
+  <tr>
+    <td><strong>"I need full ownership and permissive licensing"</strong></td>
+    <td><strong>B — Train 300M from scratch</strong></td>
+    <td>Your model, your license. 300M is the sweet spot for single-GPU training.</td>
+  </tr>
+  <tr>
+    <td><strong>"I want quality + ownership together"</strong></td>
+    <td><strong>C — Distill from LLaDA</strong></td>
+    <td>Best quality per owned parameter. 2-3 days for a custom 300M that acts like 8B on-domain.</td>
+  </tr>
+  <tr>
+    <td><strong>"I'm doing this to learn the most"</strong></td>
+    <td><strong>B — Train from scratch</strong></td>
+    <td>You learn more building every layer than loading a checkpoint. Your tiny MDLM was step 1; 300M is step 2.</td>
+  </tr>
+  <tr>
+    <td><strong>"I want to generate long code (200K context)"</strong></td>
+    <td><strong>Wait for DiffuMamba</strong></td>
+    <td>Attention-based models can't do 200K on L40S. Mamba's O(L) scaling is the only viable path. <a href="https://github.com/ChrisLundquist/modded-diffumamba">modded-diffumamba</a> exists but doesn't yet support 200K context. Check back.</td>
+  </tr>
+  <tr>
+    <td><strong>"I can spend R$ 3-5K and want maximum quality"</strong></td>
+    <td><strong>A + cluster</strong></td>
+    <td>Fine-tune DiffusionGemma on 4× L40S cluster (BF16 LoRA, R$ 3.635, ~6 hours). Maximum quality with your budget.</td>
+  </tr>
+</table>
+
+<h3>Timeline Comparison</h3>
+
+<div class="timeline">
+  <div class="timeline-row">
+    <div class="label">Path A</div>
+    <div class="bar-track">
+      <div class="bar-fill fast">~3 hours</div>
+    </div>
+  </div>
+  <div class="timeline-row">
+    <div class="label">Path B</div>
+    <div class="bar-track">
+      <div class="bar-fill medium">~1 day training + prep</div>
+    </div>
+  </div>
+  <div class="timeline-row">
+    <div class="label">Path C</div>
+    <div class="bar-track">
+      <div class="bar-fill slow">~2-3 days (teacher + student)</div>
+    </div>
+  </div>
+  <div class="timeline-row">
+    <div class="label">Full 1B scratch</div>
+    <div class="bar-track">
+      <div class="bar-fill pain">~2-3 weeks</div>
+    </div>
+  </div>
+</div>
+
+<h3>Risk Assessment</h3>
+
+<table>
+  <tr><th>Risk Factor</th><th>Path A (Fine-tune)</th><th>Path B (Scratch 300M)</th><th>Path C (Distill)</th></tr>
+  <tr>
+    <td>Technical risk</td>
+    <td>Low — well-trodden path, LLaDA has 3.9K★ GitHub</td>
+    <td>Medium — you're implementing architecture decisions yourself</td>
+    <td>Medium-High — distillation pipelines are less standardized</td>
+  </tr>
+  <tr>
+    <td>Quality risk</td>
+    <td>Low — 8B model, proven architecture</td>
+    <td>High — 300M diffusion is weak by absolute standards</td>
+    <td>Medium — quality depends on distillation quality</td>
+  </tr>
+  <tr>
+    <td>Cost risk</td>
+    <td>None — R$ 0 on existing VM</td>
+    <td>Low — R$ 0-216 on existing VM</td>
+    <td>Low — R$ 0-416 on existing VM</td>
+  </tr>
+  <tr>
+    <td>Obsolescence risk</td>
+    <td>Low — LLaDA is active, fine-tuning transferable to newer models</td>
+    <td>Low — your architecture is your IP, independent of ecosystem</td>
+    <td>Low — you own the student; can swap teacher later</td>
+  </tr>
+  <tr>
+    <td>License risk</td>
+    <td>Medium — LLaDA is research-only (check latest)</td>
+    <td>None — your code, your data, your license</td>
+    <td>Low — teacher used offline; student is your creation</td>
+  </tr>
+</table>
+
+<h3>The "Build or Wait" Verdict</h3>
+
+<div class="verdict-banner build">
+  <h3>✅ BUILD — With One Condition</h3>
+  <p style="font-size:1.05rem; margin-bottom:0;">
+    <strong>Build a diffusion LM on your L40S, but don't train from scratch.</strong> The 16× compute gap means training a general-purpose diffusion LM is economically uncompetitive with AR. But <strong>fine-tuning existing models</strong> (Path A: LLaDA 8B + QLoRA) gives you full diffusion LM benefits at a fraction of the cost — and is <em>immediately viable on your hardware</em>.
+  </p>
+  <p style="margin-top:0.75rem; margin-bottom:0;">
+    If you need <strong>full ownership</strong>, train a 300M domain-specialized model (Path B) or distill (Path C). Both are feasible on your L40S in 1-3 days. The result won't compete with GPT-4 on general text, but on Portuguese+coding tasks it will be competitive with much larger general models.
+  </p>
+</div>
+
+<div class="verdict-banner conditional">
+  <h3>⏳ WAIT — For 200K Context</h3>
+  <p style="font-size:1.05rem; margin-bottom:0;">
+    If your primary use case is <strong>long-context code generation (200K+ tokens)</strong>, wait for production-ready DiffuMamba weights or a Mamba-based diffusion LM you can fine-tune. Attention's O(L²) scaling makes 200K infeasible on your L40S. The modded-diffumamba repo shows the architecture works — what's missing is a pre-trained checkpoint large enough to fine-tune.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- PART 5: YOUR NEXT STEPS -->
+<!-- ============================================================ -->
+
+<h2>Part 5: 👣 Your Concrete Next Steps</h2>
+
+<p>Here's what I'd do if I were in your shoes, ordered by week:</p>
+
+<h3>Week 1: Path A — Fine-tune LLaDA 8B (3 hours, R$ 0)</h3>
+<ol>
+  <li>Clone <a href="https://github.com/ML-GSAI/LLaDA">LLaDA GitHub</a></li>
+  <li>Load LLaDA 8B in 4-bit on your L40S — verify inference works</li>
+  <li>Prepare 1,000 Portuguese+code examples (instruction → response)</li>
+  <li>Run QLoRA fine-tune for 2-4 hours</li>
+  <li>Evaluate: generate Portuguese text, compare before/after fine-tuning</li>
+  <li><strong>Win:</strong> You have a working diffusion LM in a single afternoon.</li>
+</ol>
+
+<h3>Week 2: Path B — Train 300M from scratch (1 day, R$ 0)</h3>
+<ol>
+  <li>Build BPE tokenizer on Portuguese text (8K vocab, ~1 hour)</li>
+  <li>Scale your tiny MDLM: d_model=768, layers=12, heads=12 (from your existing code in <code>train_tiny_mdm.py</code>)</li>
+  <li>Collect and tokenize ~6B tokens of Portuguese text (can use smaller for initial test)</li>
+  <li>Train with Muon optimizer (copy recipe from modded-diffumamba)</li>
+  <li><strong>Win:</strong> You own the entire stack. Compare quality against fine-tuned LLaDA.</li>
+</ol>
+
+<h3>Week 3: Compare, Decide, Deploy</h3>
+<ol>
+  <li>Run side-by-side evals: fine-tuned LLaDA vs your 300M model on Portuguese tasks</li>
+  <li>If LLaDA quality is worth the license trade-off: deploy it</li>
+  <li>If you need ownership: distill LLaDA → 300M (Path C, adds 2 days)</li>
+  <li>Document your findings — you'll have the most practical experience with diffusion LMs on Brazilian hardware</li>
+</ol>
+
+<h2>Check Your Understanding</h2>
+
+<div class="quiz">
+  <div class="quiz-question">1. What does the SMDM 16× compute gap mean in practice for your build decision?</div>
+  <div class="quiz-options" id="q1opts">
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="a">
+      Diffusion LMs are always worse than AR models — you should give up on the idea
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="b">
+      Training a diffusion LM from scratch to match AR quality costs 16× more compute, but fine-tuning an existing diffusion LM bypasses this cost entirely
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="c">
+      The 16× gap only applies to inference, not training
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q1" value="d">
+      The gap shrinks to 2× when using the Muon optimizer
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q1fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">2. A 300M masked diffusion model trained from scratch has roughly the quality ceiling of what size autoregressive model?</div>
+  <div class="quiz-options" id="q2opts">
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="a">
+      300M AR (same size)
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="b">
+      19M AR (16× smaller — the compute gap at work)
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="c">
+      1B AR (more parameters needed for diffusion)
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q2" value="d">
+      It depends on the dataset size, not the model size
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q2fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">3. Why is fine-tuning LLaDA 8B (Path A) economically smarter than training a 1B model from scratch on your L40S?</div>
+  <div class="quiz-options" id="q3opts">
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="a">
+      Fine-tuning always gives better results than training from scratch
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="b">
+      LLaDA 8B already paid the 16× pre-training cost. Fine-tuning only pays the adaptation cost (2-4 hours), while training from scratch would pay the full 16× cost for lower quality
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="c">
+      LLaDA 8B uses a different architecture that avoids the 16× gap
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q3" value="d">
+      8B models are always faster to train than 1B models on the same GPU
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q3fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">4. You need 200K context for code generation. Attention-based diffusion LMs are O(L²). Which approach handles this?</div>
+  <div class="quiz-options" id="q4opts">
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="a">
+      LLaDA 8B with Flash Attention — Flash Attention makes O(L²) into O(L)
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="b">
+      A Mamba-based diffusion LM (DiffuMamba) with O(L) scaling — but no production checkpoints exist yet for fine-tuning
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="c">
+      Use block-autoregressive to split 200K into 256-token chunks
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q4" value="d">
+      Train a smaller 100M diffusion LM at 200K context — O(L²) is manageable at small hidden dim
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q4fb"></div>
+</div>
+
+<div class="quiz">
+  <div class="quiz-question">5. What is the key advantage of distillation (Path C) over fine-tuning (Path A) if you care about long-term ownership?</div>
+  <div class="quiz-options" id="q5opts">
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="a">
+      Distillation is faster than fine-tuning
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="b">
+      The student model is your architecture — you control the license, can modify the architecture, and aren't tied to the teacher model's ecosystem
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="c">
+      Distilled models always outperform their teachers
+    </label>
+    <label class="quiz-option">
+      <input type="radio" name="q5" value="d">
+      Distillation doesn't require a GPU — it runs on CPU
+    </label>
+  </div>
+  <div class="quiz-feedback" id="q5fb"></div>
+</div>
+
+<h2>Final Synthesis: What You Now Know</h2>
+
+<p>This is the last lesson in the arc. Here's what you can now do that you couldn't before Lesson 0001:</p>
+
+<ol>
+  <li><strong>🔬 Read a diffusion LM paper</strong> and understand the architecture choices — tokenizer, position encoding, time conditioning, attention vs SSM, prediction head.</li>
+  <li><strong>🧪 Train a tiny diffusion LM</strong> from scratch on your local GPU — and modify its architecture.</li>
+  <li><strong>📊 Estimate training costs</strong> for any diffusion LM on your hardware — FLOPs, VRAM, time, and R$.</li>
+  <li><strong>🔧 Fine-tune production-scale diffusion LMs</strong> (LLaDA 8B, DiffusionGemma 26B) on your L40S with concrete recipes.</li>
+  <li><strong>🎯 Make an informed build decision</strong> — you know the scaling laws, the hardware constraints, and the three viable paths forward.</li>
+</ol>
+
+<div class="callout callout-success">
+  <strong>The final takeaway:</strong> Diffusion LMs are not a replacement for AR models in training — the 16× compute gap is real. But they <strong>complement</strong> AR models where parallel generation, controllable output, or no KV-cache matters. For your L40S, the smart play is: <strong>fine-tune LLaDA 8B today, train a 300M from scratch for ownership, and watch DiffuMamba for 200K context.</strong> You now have the knowledge to execute all three.
+</div>
+
+<h2>References & Next Resources</h2>
+
+<ul>
+  <li><a href="../reference/cost-and-hardware.html">Cost & Hardware Reference</a> — Quick lookup for all the numbers</li>
+  <li><a href="../reference/magalu-cloud-training-costs.html">Magalu Cloud Training Costs (R$)</a> — Brazilian pricing deep-dive</li>
+  <li><a href="../reference/training-costs-deep-dive.html">Training Costs Deep Dive</a> — FLOPs and memory math for cluster scenarios</li>
+  <li><a href="../GLOSSARY.md">GLOSSARY.md</a> — All terms defined</li>
+  <li><a href="https://arxiv.org/abs/2406.07524">SMDM Paper</a> — The 16× compute gap source</li>
+  <li><a href="https://github.com/ML-GSAI/LLaDA">LLaDA 8B — GitHub</a> — Fine-tune today</li>
+  <li><a href="https://github.com/ChrisLundquist/modded-diffumamba">modded-diffumamba — GitHub</a> — Mamba MDLM reference implementation</li>
+  <li><a href="https://arxiv.org/abs/2203.15556">Chinchilla Scaling Laws</a> — The 20 token/param rule</li>
+</ul>
+
+<nav class="lesson-nav">
+  <a href="0006-at-scale-diffusion-gemma-mamba.html">← At Scale</a>
+  <a href="../reference/cost-and-hardware.html">Cost Reference →</a>
+</nav>
+  <a href="0008-build-distill-300m-mdlm.html">Next → Build: Distill 300M MDLM</a>
+</nav>
+
+<script>
+(function() {
+  const quizData = {
+    q1: {
+      answer: 'b',
+      correct: '✅ Correct! The 16× compute gap applies to <em>training from scratch</em>. Fine-tuning starts from a model that already paid that cost. You only pay the adaptation cost (2-4 hours on L40S), making it economically viable.',
+      wrong: '❌ Think about who pays the 16× cost — the original trainer or the fine-tuner?'
+    },
+    q2: {
+      answer: 'b',
+      correct: '✅ Exactly! A 300M diffusion model has the quality ceiling of a ~19M AR model on general text (300M ÷ 16). This is the sobering implication of the 16× compute gap for training from scratch.',
+      wrong: '❌ The compute gap is about FLOPs, not parameters — but at equal training FLOPs, a diffusion model delivers much lower loss than an AR model of the same size.'
+    },
+    q3: {
+      answer: 'b',
+      correct: '✅ Right! LLaDA 8B already consumed 130K H800 GPU-hours of pre-training. Fine-tuning adds 2-4 hours of L40S time. Training a 1B model from scratch would need weeks and deliver 8× worse quality by absolute standards.',
+      wrong: '❌ The key insight is about cost allocation — who pays for the 16× gap, and when?'
+    },
+    q4: {
+      answer: 'b',
+      correct: '✅ Bingo! Attention is inherently O(L²) — Flash Attention optimizes the constant but doesn\'t change the complexity. Mamba\'s O(L) SSM is the only viable path for 200K context on single GPU. modded-diffumamba proves the architecture works; the missing piece is a production checkpoint for fine-tuning.',
+      wrong: '❌ Consider the fundamental complexity class — O(L²) vs O(L) — not implementation optimizations.'
+    },
+    q5: {
+      answer: 'b',
+      correct: '✅ Excellent! Distillation decouples you from the teacher. The student is your architecture, your weights, your license. If the teacher gets deprecated or changes license terms, you\'re unaffected. This is the ownership advantage.',
+      wrong: '❌ Distillation is about independence, not speed or quality per se. The student inherits but is not dependent on the teacher.'
+    }
+  };
+
+  ['q1', 'q2', 'q3', 'q4', 'q5'].forEach(qName => {
+    const opts = document.getElementById(qName + 'opts');
+    const fb = document.getElementById(qName + 'fb');
+    const radios = opts.querySelectorAll('input[type="radio"]');
+    radios.forEach(radio => {
+      radio.addEventListener('change', () => {
+        opts.querySelectorAll('.quiz-option').forEach(opt => {
+          opt.classList.remove('correct', 'wrong');
+        });
+        const selected = radio.closest('.quiz-option');
+        if (radio.value === quizData[qName].answer) {
+          selected.classList.add('correct');
+          fb.innerHTML = quizData[qName].correct;
+        } else {
+          selected.classList.add('wrong');
+          fb.innerHTML = quizData[qName].wrong;
+        }
+        fb.classList.add('show');
+      });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

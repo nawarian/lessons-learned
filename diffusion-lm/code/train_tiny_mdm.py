@@ -37,7 +37,7 @@ class Config:
     lr: float = 3e-4
     weight_decay: float = 0.01
     warmup_steps: int = 100
-    train_steps: int = 3000
+    train_steps: int = 5_000
     log_every: int = 100
     eval_every: int = 500
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
